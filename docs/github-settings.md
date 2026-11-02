@@ -20,7 +20,7 @@
 
 ```bash
 gh api repos/Advanced-AI-Leadership-Project/umsal-backend \
-  --jq '{private,default_branch,allow_squash_merge,allow_merge_commit,allow_rebase_merge,delete_branch_on_merge,allow_auto_merge,allow_update_branch}'
+  --jq '{private,default_branch,allow_squash_merge,allow_merge_commit,allow_rebase_merge,delete_branch_on_merge,allow_auto_merge,allow_update_branch,squash_merge_commit_title,squash_merge_commit_message}'
 ```
 
 ## 자동화 저장소 값

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -29,9 +30,14 @@ def command(
     args: list[str], *, cwd: Path | None = None, check: bool = True
 ) -> subprocess.CompletedProcess:
     try:
-        # Git and gh emit UTF-8; the OS locale (e.g. cp949 on Korean Windows) may not.
+        # Capture bytes: the OS locale (e.g. cp949 on Korean Windows) is not UTF-8,
+        # and Windows text-mode decoding failures silently yield stdout=None.
         result = subprocess.run(
-            args, cwd=cwd or ROOT, encoding="utf-8", capture_output=True, check=False
+            args,
+            cwd=cwd or ROOT,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            capture_output=True,
+            check=False,
         )
     except OSError as error:
         raise WorkflowError(f"Required executable is unavailable: {args[0]}") from error
@@ -40,7 +46,12 @@ def command(
         raise WorkflowError(
             f"{args[0]} command failed; inspect it locally without sharing secrets."
         )
-    return result
+    try:
+        stdout = result.stdout.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise WorkflowError(f"{args[0]} returned non-UTF-8 output.") from error
+    # stderr is never displayed, so it is not decoded.
+    return subprocess.CompletedProcess(result.args, result.returncode, stdout, None)
 
 
 def git(*args: str, check: bool = True) -> str:

@@ -37,11 +37,11 @@ class GitHub:
         args = ["gh", "api", path, "--method", method]
         if data is not None:
             args += ["--input", "-"]
+        # Bytes in both directions: PR bodies are Korean and the OS locale may not be UTF-8.
         result = subprocess.run(
             args,
-            input=json.dumps(data) if data is not None else None,
+            input=json.dumps(data).encode("utf-8") if data is not None else None,
             capture_output=True,
-            encoding="utf-8",
             check=False,
             timeout=90,
         )
@@ -49,8 +49,10 @@ class GitHub:
             # GitHub errors can contain PR bodies or credentials. Do not echo them.
             raise GateError("GitHub request failed; no merge was authorized by this response.")
         try:
-            return json.loads(result.stdout) if result.stdout.strip() else None
+            stdout = result.stdout.decode("utf-8")
+            return json.loads(stdout) if stdout.strip() else None
         except ValueError as error:
+            # UnicodeDecodeError is a ValueError: non-UTF-8 output also fails closed.
             raise GateError("GitHub returned an invalid response.") from error
 
     def repo(self, path: str, *, method: str = "GET", data=None):
