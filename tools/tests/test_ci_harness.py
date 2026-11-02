@@ -24,12 +24,27 @@ class WorkflowTrustTests(unittest.TestCase):
     def test_every_dispatch_checkout_loads_the_runner_from_its_own_trusted_sha(self):
         workflow = (TOOLS.parent / ".github/workflows/ci.yml").read_text()
         checkouts = workflow.split("- uses: actions/checkout@")[1:]
-        self.assertGreaterEqual(len(checkouts), 3)
+        self.assertEqual(len(checkouts), 3)
         for item in checkouts:
             block = item.split("\n      - ", 1)[0]
             self.assertIn("ref: ${{ github.sha }}", block)
             self.assertIn("persist-credentials: false", block)
             self.assertNotIn("inputs.", block)
+
+    def test_required_check_names_agree_across_policy_harness_workflow_and_protection(self):
+        github = TOOLS.parent / ".github"
+        checks = set(json.loads((github / "ai-workflow.json").read_text())["required_checks"])
+        jobs = json.loads((github / "harness.json").read_text())["required_jobs"]
+        protection = json.loads((github / "main-protection.json").read_text())
+        contexts = {item["context"] for item in protection["required_status_checks"]["checks"]}
+        workflow = (github / "workflows/ci.yml").read_text()
+        needs = workflow.split("\n  harness:\n", 1)[1].split("\n    needs: [", 1)[1].split("]")[0]
+        # policy runs in its own workflow; every other required check is a ci.yml job.
+        self.assertEqual(checks, set(jobs) | {"policy"})
+        self.assertEqual(checks, contexts)
+        self.assertEqual({name.strip() for name in needs.split(",")}, set(jobs) - {"harness"})
+        for job in jobs:
+            self.assertIn(f"\n  {job}:\n", workflow)
 
 
 class PreparationTests(unittest.TestCase):
