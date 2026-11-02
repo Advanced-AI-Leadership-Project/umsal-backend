@@ -1,0 +1,28 @@
+name: 오류 수정
+description: 재현 가능한 문제와 수정 조건
+title: "[오류] "
+body:
+  - type: textarea
+    id: actual
+    attributes:
+      label: 발생한 동작과 재현 순서
+      description: 실제 결과와 재현 절차를 적습니다. 토큰·원음·개인 자료를 첨부하지 않습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 동작
+      description: 관련 SPEC와 수정 후 확인할 조건을 적습니다.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 확인 환경과 commit
+      description: 실행 환경(로컬·Lambda 스테이지)·요청 경로와 확인한 commit SHA를 적습니다.
+  - type: textarea
+    id: verification
+    attributes:
+      label: 검증과 담당
+      description: 회귀 검증 방법, 담당 에이전트, 관련 이슈·PR을 적습니다.

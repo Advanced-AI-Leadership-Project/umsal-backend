@@ -1,0 +1,30 @@
+name: 개발 작업
+description: AI가 구현하고 PR로 연결할 작업
+title: "[작업] "
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 목적과 기대 동작
+      description: 어떤 상황에서 무엇이 달라져야 하는지 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 범위와 수정 영역
+      description: 관련 SPEC/FR/WF, 담당 파일과 이번에 포함하지 않을 내용을 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건과 검증
+      description: 실제 동작·실패 경로·확인 명령으로 완료를 판별할 조건을 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: coordination
+    attributes:
+      label: 담당 에이전트와 협업
+      description: 담당 에이전트/세션, 겹치는 작업, 의존 PR과 인수인계 내용을 적습니다.

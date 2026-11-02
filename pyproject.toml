@@ -1,0 +1,50 @@
+[project]
+name = "umsal-backend"
+version = "0.1.0"
+description = "엄살 백엔드 - FastAPI 서버리스(API Gateway, Lambda, DynamoDB)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "mangum>=0.19,<1",
+]
+
+[project.scripts]
+umsal-backend = "umsal_backend.__main__:main"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1,<0.29",
+    "pip-audit==2.10.1",
+    "pytest>=9.0.3,<10",
+    "pytest-cov==7.0.0",
+    "ruff>=0.11,<1",
+    "uvicorn>=0.32,<1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = "==0.12.3"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib -ra --cov=umsal_backend --cov-branch --cov-report=term-missing --cov-report=xml:.reports/python-coverage.xml --cov-report=json:.reports/python-coverage.json --cov-fail-under=80"
+
+[tool.coverage.run]
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["umsal_backend"]
