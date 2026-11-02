@@ -6,6 +6,7 @@ import copy
 import importlib.util
 import json
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -548,6 +549,31 @@ class ConversationGates(unittest.TestCase):
         stub = types.SimpleNamespace(validate_subject=lambda *_: [])
         with patch.dict("sys.modules", {"check_git_policy": stub}):
             self.assertFalse(ai.same_reviewed_pr(CONFIG, changed, pr))
+
+
+class SubprocessEncoding(unittest.TestCase):
+    def test_child_output_is_decoded_as_utf8_regardless_of_os_locale(self):
+        # GitHub JSON with Korean PR text broke cp949-locale Windows hosts.
+        script = 'import sys; sys.stdout.buffer.write(\'{"body": "한글 본문"}\'.encode())'
+        result = ai.command([sys.executable, "-c", script])
+        self.assertEqual(json.loads(result.stdout), {"body": "한글 본문"})
+
+    def test_python_child_diagnostics_keep_non_ascii_text(self):
+        # The policy validator is a Python child; on Windows it would print in cp949.
+        result = ai.command([sys.executable, "-c", "print('FAIL: 한글 진단')"])
+        self.assertEqual(result.stdout.strip(), "FAIL: 한글 진단")
+
+    def test_invalid_utf8_output_is_a_clean_workflow_error(self):
+        script = "import sys; sys.stdout.buffer.write(b'\\xff')"
+        with self.assertRaises(ai.WorkflowError):
+            ai.command([sys.executable, "-c", script])
+
+    def test_child_receives_utf8_io_and_bytes_are_decoded(self):
+        with patch.object(ai.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, "한글".encode(), b"")
+            self.assertEqual(ai.command(["git", "status"]).stdout, "한글")
+        self.assertEqual(run.call_args.kwargs["env"]["PYTHONIOENCODING"], "utf-8")
+        self.assertNotIn("text", run.call_args.kwargs)
 
 
 class RemoteNormalization(unittest.TestCase):
