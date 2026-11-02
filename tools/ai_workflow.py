@@ -29,7 +29,10 @@ def command(
     args: list[str], *, cwd: Path | None = None, check: bool = True
 ) -> subprocess.CompletedProcess:
     try:
-        result = subprocess.run(args, cwd=cwd or ROOT, text=True, capture_output=True, check=False)
+        # Git and gh emit UTF-8; the OS locale (e.g. cp949 on Korean Windows) may not.
+        result = subprocess.run(
+            args, cwd=cwd or ROOT, encoding="utf-8", capture_output=True, check=False
+        )
     except OSError as error:
         raise WorkflowError(f"Required executable is unavailable: {args[0]}") from error
     if check and result.returncode:

@@ -367,6 +367,14 @@ class GitHubBoundaryTests(unittest.TestCase):
             api.api("repos/unrelated/private/issues")
         command.assert_not_called()
 
+    def test_request_and_response_bodies_use_utf8_regardless_of_os_locale(self):
+        api = mc.GitHub(CONFIG["repository"])
+        with patch.object(mc.subprocess, "run") as run:
+            run.return_value = Mock(returncode=0, stdout='{"body": "한글"}')
+            response = api.repo("issues/1", method="PATCH", data={"body": "한글"})
+        self.assertEqual(response, {"body": "한글"})
+        self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
+
     def test_pagination_collects_all_pages(self):
         api = mc.GitHub(CONFIG["repository"])
         with patch.object(api, "repo", side_effect=[[{}] * 100, [{"id": 101}]]) as fetch:

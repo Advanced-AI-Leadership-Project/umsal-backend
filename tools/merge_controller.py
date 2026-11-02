@@ -41,7 +41,7 @@ class GitHub:
             args,
             input=json.dumps(data) if data is not None else None,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             check=False,
             timeout=90,
         )
