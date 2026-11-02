@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "repository": "Advanced-AI-Leadership-Project/umsal-backend",
+  "base_branch": "main",
+  "branch_pattern": "^codex/[1-9][0-9]*-[a-z0-9]+(?:-[a-z0-9]+)*$",
+  "commit_types": [
+    "feat",
+    "fix",
+    "docs",
+    "refactor",
+    "test",
+    "chore",
+    "ci",
+    "build",
+    "perf",
+    "revert"
+  ],
+  "commit_max_length": 100,
+  "required_checks": [
+    "policy",
+    "python",
+    "quality",
+    "security",
+    "harness"
+  ],
+  "required_workflows": [
+    ".github/workflows/policy.yml",
+    ".github/workflows/ci.yml"
+  ],
+  "merge_method": "squash"
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "ci_workflow": ".github/workflows/ci.yml",
+  "required_jobs": ["quality", "python", "security", "harness"],
+  "hold_label": "harness:hold",
+  "critical_paths": [
+    ".github/", ".githooks/", "tools/", "Makefile", "pyproject.toml", "uv.lock",
+    ".python-version", "infra/", "AGENTS.md", "AGENT.md"
+  ]
+}

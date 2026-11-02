@@ -1,0 +1,147 @@
+name: development-checks
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'integration' && format('integrate pr={0} head={1} base={2}', inputs.pr, inputs.head_sha, inputs.base_sha) || format('verify main={0}', github.sha) }}
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [integration, main]
+        default: integration
+        required: true
+      pr:
+        type: string
+        default: ""
+      head_sha:
+        type: string
+        default: ""
+      base_sha:
+        type: string
+        required: true
+
+# Candidate code only receives a read token. No repository/cloud/API secrets.
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.event_name }}-${{ inputs.pr || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  HARNESS_MODE: ${{ inputs.mode }}
+  HARNESS_PR: ${{ inputs.pr }}
+  HARNESS_HEAD: ${{ inputs.head_sha }}
+  HARNESS_BASE: ${{ inputs.base_sha }}
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 tools/ci_harness.py prepare
+      - run: python3 tools/ci_harness.py quality
+      - name: Validate all Actions workflows (pinned actionlint)
+        run: |
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/actionlint.tar.gz" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color -shellcheck= -pyflakes=
+
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 tools/ci_harness.py prepare
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.12.3"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: python3 tools/ci_harness.py python
+      - name: Preserve synthetic test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .reports/
+          include-hidden-files: true
+          retention-days: 14
+
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 tools/ci_harness.py prepare
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.12.3"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: python3 tools/ci_harness.py security
+      - name: Preserve dependency advisory reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .reports/
+          include-hidden-files: true
+          retention-days: 14
+
+  harness:
+    if: always()
+    needs: [quality, python, security]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every suite to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          for name, result in results.items():
+              print(f"{name}: {result['result']}")
+          assert all(r['result'] == 'success' for r in results.values()), 'Missing, skipped or failed validation'
+          PY
+
+  notify-controller:
+    # Only the trusted main dispatch definition receives this token. No checkout
+    # or candidate code runs here. Explicit dispatch closes event propagation gaps.
+    if: always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: [harness]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - name: Wake the trusted controller after this validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPLETED_RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY' | gh api --method POST \
+            repos/Advanced-AI-Leadership-Project/umsal-backend/actions/workflows/integrate.yml/dispatches --input -
+          import json, os
+          print(json.dumps({"ref": "main", "inputs": {"completed_run_id": os.environ["COMPLETED_RUN_ID"]}}))
+          PY

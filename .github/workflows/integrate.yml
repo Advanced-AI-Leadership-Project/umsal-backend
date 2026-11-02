@@ -1,0 +1,49 @@
+name: automatic-main-integration
+
+on:
+  workflow_run:
+    workflows: [development-checks, shared-git-policy]
+    types: [completed]
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft, labeled, unlabeled]
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      completed_run_id:
+        type: string
+        default: ""
+        description: Trusted CI run finishing its notification job
+
+# Every invocation reconciles the queue; no event-provided shell/code/artifacts.
+concurrency:
+  group: umsal-backend-main-integration
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  integrate:
+    if: github.event.repository.full_name == 'Advanced-AI-Leadership-Project/umsal-backend'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      checks: read
+      statuses: read
+      pull-requests: write
+      issues: write
+      actions: write
+    steps:
+      - name: Check out trusted main only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconcile validated PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UMSAL_AUTO_MERGE: ${{ vars.UMSAL_AUTO_MERGE || 'false' }}
+          HARNESS_COMPLETED_RUN_ID: ${{ inputs.completed_run_id }}
+        run: python3 tools/merge_controller.py --execute
