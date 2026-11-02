@@ -2,37 +2,41 @@
 
 대상은 비공개 저장소 `Advanced-AI-Leadership-Project/umsal-backend`다. 다른 저장소나 조직 전체의 설정을 변경하지 않는다.
 
-## 2026-11-03 확인 상태
+## 2026-11-03 적용 상태
 
-조직 요금제는 Free다. 이 비공개 저장소의 rulesets 조회 API는 403과 `Upgrade to GitHub Pro or make this repository public to enable this feature.`를 반환했다. 관리자 권한 부재가 아니라 기능 제공 범위의 제한이다.
-따라서 서버가 main 직접 push·실패한 CI의 병합·관리자 우회를 강제로 차단하는 상태가 아니다. 공개 범위나 요금제를 변경하지 않았다.
+조직 요금제는 Free다. 이 비공개 저장소의 rulesets·branch protection 조회 API는 403과 `Upgrade to GitHub Pro or make this repository public to enable this feature.`를 반환했다. 관리자 권한 부재가 아니라 기능 제공 범위의 제한이다.
+따라서 서버가 main 직접 push·실패한 CI의 병합·관리자 우회를 강제로 차단하는 상태가 아니다. 공개 범위나 요금제를 변경하지 않았다. GitHub 화면의 "Your main branch isn't protected" 배너는 이 제한 때문이며 현재 요금제에서는 해소할 수 없다.
 
-| 설정 | 확인 시점 값 | 목표 ([repository-settings.json](../.github/repository-settings.json)) |
-|---|---|---|
-| squash merge | 허용 | 허용 |
-| merge commit / rebase | 허용 | 비활성화 |
-| 병합 후 브랜치 자동 삭제 | 비활성화 | 활성화 |
-| GitHub 자동 병합 / Update branch | 비활성화 | 비활성화 |
-| squash 제목 / 본문 | 기본값 | PR_TITLE / PR_BODY |
+[repository-settings.json](../.github/repository-settings.json)을 저장소 API로 적용하고 응답을 다시 확인했다.
 
-목표 값은 아직 적용하지 않았다. 적용 후 이 표를 실제 API 응답으로 갱신한다.
+| 설정 | 적용 결과 |
+|---|---|
+| 기본 브랜치 / 공개 범위 | main / private 유지 |
+| 병합 방식 | squash 허용, merge commit·rebase 비활성화 |
+| squash 제목 / 본문 | PR_TITLE / PR_BODY |
+| 병합 후 작업 브랜치 | 자동 삭제 활성화 |
+| GitHub 자동 병합 | 비활성화. 신뢰된 Actions 컨트롤러가 검증 후 병합 |
+| GitHub Update branch 버튼 | 비활성화. AI가 `chore(sync)` commit으로 main을 반영 |
 
 ```bash
-gh api --method PATCH repos/Advanced-AI-Leadership-Project/umsal-backend \
-  --input .github/repository-settings.json
 gh api repos/Advanced-AI-Leadership-Project/umsal-backend \
   --jq '{private,default_branch,allow_squash_merge,allow_merge_commit,allow_rebase_merge,delete_branch_on_merge,allow_auto_merge,allow_update_branch}'
 ```
 
-## 자동화 활성화에 필요한 저장소 값
+## 자동화 저장소 값
 
 | 항목 | 용도 | 상태 |
 |---|---|---|
-| Actions 변수 `UMSAL_AUTO_MERGE` | `true`일 때만 컨트롤러가 피드백·통합 검사·병합 수행 | 미설정(= 중지) |
-| 라벨 `harness:hold` | 개별 PR 자동 병합 보류 | 미생성 |
-| 라벨 `area:infra`, `priority:P0` | main 회귀 복구 이슈 자동 생성 | 미생성 |
+| Actions 변수 `UMSAL_AUTO_MERGE` | `true`일 때만 컨트롤러가 피드백·통합 검사·병합 수행 | `true` (설치 PR #2 병합과 main `377c9ce` 검증 성공 확인 후 설정) |
+| 라벨 `harness:hold` | 개별 PR 자동 병합 보류 | 생성 |
+| 라벨 `area:infra`, `priority:P0` | main 회귀 복구 이슈 자동 생성 | 생성 |
 
-초기 설치 PR은 `python3 tools/ai_workflow.py merge <PR번호>` plan → `--execute`로 병합하고, main 검증 성공을 확인한 뒤 `UMSAL_AUTO_MERGE=true`를 설정한다.
+설치 PR #2는 컨트롤러가 main에 없던 상태라 `python3 tools/ai_workflow.py merge 2` plan → `--execute`로 병합했다. 변수 설정 후 수동 dispatch한 컨트롤러 실행은 열린 PR이 없는 상태에서 오류 없이 종료했다.
+
+```bash
+gh variable list --repo Advanced-AI-Leadership-Project/umsal-backend
+gh variable set UMSAL_AUTO_MERGE --repo Advanced-AI-Leadership-Project/umsal-backend --body false  # 전체 중지
+```
 
 ## 서버 보호 목표
 
