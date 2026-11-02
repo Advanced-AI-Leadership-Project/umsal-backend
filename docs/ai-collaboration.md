@@ -84,8 +84,10 @@ scope는 생략할 수 있다. 호환성이 깨지는 변경은 `type(scope)!:` 
 python3 tools/ai_workflow.py check
 git diff --cached --check
 git commit -m "feat(consent): 양쪽 동의 상태 조회 추가"
-git push --set-upstream origin HEAD
+git push --set-upstream origin codex/12-consent-flow
 ```
+
+push 대상은 `HEAD`가 아니라 브랜치 이름으로 적는다. pre-push 훅은 `refs/heads/<브랜치>`가 아닌 로컬 ref를 우회 시도로 보고 차단한다.
 
 공유된 작업 브랜치의 이력을 재작성하거나 `push --force`하지 않는다. main을 반영해야 할 때는 fetch 후 명시적인 동기화 커밋으로 합친다. 충돌은 양쪽 의도를 읽고 해결한 뒤 영향받은 검사를 다시 한다. 해결 과정에서 제품 범위나 동의·삭제 의미가 불명확하면 해당 판단만 사용자에게 확인하고 독립 작업은 계속한다.
 
