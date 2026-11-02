@@ -81,7 +81,7 @@ GitHub 서버 보호의 실제 상태는 `docs/github-settings.md`를 따른다.
 | 대상 서비스 | API Gateway, Lambda, DynamoDB |
 | help_level | HIGH. 사용자가 설명·이유·개선안 안내를 선택했으며 반복해서 묻지 않는다. |
 
-브라우저 로그인은 개인 환경에서 하며 자격 증명·SSO 캐시·`~/.aws` 파일·개인 `.env`를 Git에 공유하지 않는다. 기본 프로파일을 임의 변경하지 않고 각 CLI 명령에 `--profile ai-x-final`을 명시한다. AWS MCP 서버는 개인 MCP 설정에서 `AWS_MCP_PROXY_PROFILES=ai-x-final`로 연결하며 그 설정 파일은 저장소에 두지 않는다. 아래 공식 규칙이 기존 제품 불변조건·민감 자료·Git 정책과 충돌하면 기존 프로젝트 규칙이 우선한다.
+브라우저 로그인은 개인 환경에서 하며 자격 증명·SSO 캐시·`~/.aws` 파일·개인 `.env`를 Git에 공유하지 않는다. 기본 프로파일을 임의 변경하지 않고 각 CLI 명령에 `--profile ai-x-final`을 명시한다. AWS MCP 서버는 개인 MCP 설정에서 `AWS_MCP_PROXY_PROFILES=ai-x-final`로 연결하며 그 설정 파일은 저장소에 두지 않는다. 아래 공식 규칙에 나오는 `aws` 명령(예: `aws freetier get-account-plan-state`)에도 `--profile ai-x-final`을 붙이고, `~/.aws/config`는 읽기만 하며 내용을 저장소·PR에 옮기지 않는다. 서비스 간 권한(Lambda 실행 역할 등)은 IAM 정책으로 최소 권한을 만든다. 아래 공식 규칙이 기존 제품 불변조건·민감 자료·Git 정책과 충돌하면 기존 프로젝트 규칙이 우선한다.
 
 공식 원문: https://github.com/aws/agent-toolkit-for-aws/blob/main/rules/aws-starter-rules.md (2026-11-03 확인). 라이선스: [Apache-2.0](https://github.com/aws/agent-toolkit-for-aws/blob/main/LICENSE), [NOTICE](https://github.com/aws/agent-toolkit-for-aws/blob/main/NOTICE).
 
