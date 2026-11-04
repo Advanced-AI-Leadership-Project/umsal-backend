@@ -1,6 +1,6 @@
 # 엄살 백엔드
 
-엄살 서비스의 FastAPI 서버리스 백엔드(API Gateway, Lambda, DynamoDB · ap-southeast-2)다.
+엄살 서비스의 FastAPI 서버리스 백엔드(API Gateway, Lambda, Aurora PostgreSQL, DynamoDB, S3 · ap-southeast-2)다.
 현재 구현 범위는 [SPEC](SPEC.md), 에이전트 작업 규칙은 [AGENTS](AGENTS.md), 협업 절차는 [CONTRIBUTING](CONTRIBUTING.md)을 따른다.
 
 ## 시작하기

@@ -8,7 +8,7 @@
 1. 사용자의 최신 요청과 `git status --short --branch`를 확인한다. 무관한 변경을 덮어쓰지 않는다.
 2. SPEC의 현재 범위와 관련 코드·테스트를 읽고 작은 단위로 작업한다. 작업은 이슈에 연결한 `codex/<이슈번호>-<작업명>` 브랜치에서 진행한다.
 3. `src/umsal_backend`는 FastAPI 앱, `src/umsal_backend/lambda_handler.py`는 API Gateway → Lambda 진입점, `tests`는 앱 테스트, `tools`는 Git·CI 하네스다.
-4. 현재는 `/health`만 있는 골격 단계다. 인증·동의·분석·DynamoDB 저장은 아직 구현되지 않았다. 목표 설계를 구현 완료로 보고하지 않는다.
+4. 현재는 `/health`만 있는 골격 단계다. 인증·동의·분석과 Aurora PostgreSQL·DynamoDB·S3 저장은 아직 구현되지 않았다. 저장소별 역할은 SPEC의 "저장 계층"을 따른다. 목표 설계를 구현 완료로 보고하지 않는다.
 
 ## 환경과 계약
 
@@ -31,7 +31,7 @@
 - 양쪽 분석 grant, 방향별 공유 scope, 별도의 확인 preview 허용을 클라이언트가 아니라 서버에서 검사한다.
 - 대상 확인 전 단서·집계를 만들거나 반환하지 않는다.
 - 대상 변경·철회·삭제 후 늦게 도착한 결과를 저장하거나 다시 노출하지 않는다.
-- 비동기 처리(분석 작업 등)가 추가되면 작업자는 DynamoDB에 직접 쓰지 않고 API를 거친다. 큐 메시지는 서버의 내구 commit/terminal 처분 뒤에만 삭제한다.
+- 비동기 처리(분석 작업 등)가 추가되면 작업자는 Aurora·DynamoDB에 직접 쓰지 않고 API를 거친다. 큐 메시지는 서버의 내구 commit/terminal 처분 뒤에만 삭제한다.
 - 근거는 실제 원문·대상·시각에 연결하며 미관찰·보류·실패를 정상 또는 건강함으로 표시하지 않는다.
 
 ## 검사와 기록
@@ -45,7 +45,7 @@
 | 문서만 변경 | 실제 코드·명령 대조, 로컬 링크·코드 블록·`git diff --check` |
 
 실제 영향을 확인하는 검사를 선택한다. 실행하지 못한 검사는 이유와 범위를 남긴다.
-CI는 실제 AWS 자원·IAM·DynamoDB를 검증하지 않는다. 배포 확인은 별도 완료 항목이다.
+CI는 실제 AWS 자원·IAM·VPC·Aurora·DynamoDB·S3를 검증하지 않는다. 배포 확인은 별도 완료 항목이다.
 
 ## 문서와 Git
 
@@ -78,7 +78,7 @@ GitHub 서버 보호의 실제 상태는 `docs/github-settings.md`를 따른다.
 | AWS experience | new |
 | CLI profile | ai-x-final |
 | selected Region | ap-southeast-2 (Sydney) |
-| 대상 서비스 | API Gateway, Lambda, DynamoDB |
+| 대상 서비스 | API Gateway, Lambda(VPC), Aurora PostgreSQL serverless, DynamoDB, S3 (2026-11-04 갱신) |
 | help_level | HIGH. 사용자가 설명·이유·개선안 안내를 선택했으며 반복해서 묻지 않는다. |
 
 브라우저 로그인은 개인 환경에서 하며 자격 증명·SSO 캐시·`~/.aws` 파일·개인 `.env`를 Git에 공유하지 않는다. 기본 프로파일을 임의 변경하지 않고 각 CLI 명령에 `--profile ai-x-final`을 명시한다. AWS MCP 서버는 개인 MCP 설정에서 `AWS_MCP_PROXY_PROFILES=ai-x-final`로 연결하며 그 설정 파일은 저장소에 두지 않는다. 아래 공식 규칙에 나오는 `aws` 명령(예: `aws freetier get-account-plan-state`)에도 `--profile ai-x-final`을 붙이고, `~/.aws/config`는 읽기만 하며 내용을 저장소·PR에 옮기지 않는다. 서비스 간 권한(Lambda 실행 역할 등)은 IAM 정책으로 최소 권한을 만든다. 아래 공식 규칙이 기존 제품 불변조건·민감 자료·Git 정책과 충돌하면 기존 프로젝트 규칙이 우선한다.
