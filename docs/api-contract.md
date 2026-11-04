@@ -2,7 +2,7 @@
 
 2026-11-04 · 이슈 #9 · 대응: umsal-pwa #20 (DEV-04)
 
-**초안이다.** 아래 업무 API는 모두 미구현이며 "결정 필요" 항목은 "확정"으로 표시한 D1을 빼고 사용자·팀 확인 전까지 확정이 아니다. 이 문서는 계약 차이와 결정 항목을 정리할 뿐 OpenAPI 파일을 바꾸지 않는다.
+**초안이다.** 아래 업무 API는 모두 미구현이며 "확정"으로 표시한 D1·D5를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 이 문서는 계약 차이와 결정 항목을 정리할 뿐 OpenAPI 파일을 바꾸지 않는다.
 
 ## 1. 기준 원본
 
@@ -27,7 +27,7 @@ PWA 화면은 같은 출처의 `/api/health/{live,ready}`를 호출하고 `servi
 
 ## 3. 결정 필요 항목
 
-D1은 확정됐고, D2~D9는 미확정이다.
+D1·D5는 확정됐고, 나머지는 미확정이다.
 
 | ID | 항목 | 현재 상태 | 권장안 |
 |---|---|---|---|
@@ -35,7 +35,7 @@ D1은 확정됐고, D2~D9는 미확정이다.
 | D2 | 기본 경로와 health | 백엔드 `/health`, PWA `/api/health/*` | 백엔드가 `/api` 접두사 아래에서 `GET /api/health/live`·`GET /api/health/ready`를 PWA와 같은 응답 모양으로 제공한다. ready의 `checks`는 Aurora·DynamoDB를 따로 표시한다. 기존 `/health`는 배포 확인용으로 유지할지 함께 정한다 |
 | D3 | 사용자 인증 | 원안은 Cognito access token(Bearer) | 원안 유지. PWA는 Cognito 관리형 로그인 + 인가 코드·PKCE를 쓴다. 토큰 저장 위치(메모리/세션)는 umsal-pwa #24·#25에서 정한다 |
 | D4 | 알림 기기 등록 | `POST /devices`가 `platform: ANDROID`, FCM `push_token` 전제 | PWA는 Web Push 구독(`endpoint`, `keys.p256dh`, `keys.auth`)을 쓴다. `DeviceRegistration`을 웹 구독 형태로 바꾸거나 별도 `/push-subscriptions`로 분리한다. 알림 방식 결정(umsal-pwa #52) 뒤 확정한다 |
-| D5 | 저장 계층 반영 | 원안은 PostgreSQL 한 DB에서 job·동의·recording을 잠그고 결과·상태·outbox를 한 트랜잭션으로 commit한다(설계 문서 "기계 작업 계약" 8번) | 상태와 fencing에 관여하는 `recordings`·`analysis_jobs`·`speaker_assignments`·`deletion_jobs`·`outbox`·`idempotency_keys`는 Aurora에 두어 grant와 같은 트랜잭션으로 검사한다. DynamoDB에는 `utterances`·`observations`·결과 뷰·주간 집계 항목처럼 양이 많고 키로 읽는 자료를 둔다. **#7의 "분석 작업 상태는 DynamoDB" 결정을 바꾸는 제안이라 사용자 확인이 필요하다.** 이 제안으로도 결과 본문(DynamoDB·S3) 쓰기는 Aurora 트랜잭션에 들어가지 않으므로, SPEC의 저장소 간 철회 경합은 그대로 남는다. 결과 쓰기 순서와 노출 조건은 별도로 설계한다 |
+| D5 | 저장 계층 반영 | 원안은 PostgreSQL 한 DB에서 job·동의·recording을 잠그고 결과·상태·outbox를 한 트랜잭션으로 commit한다(설계 문서 "기계 작업 계약" 8번) | **확정(2026-11-05, 사용자 결정):** 상태와 fencing에 관여하는 `recordings`·`analysis_jobs`·`speaker_assignments`·`deletion_jobs`·`outbox`·`idempotency_keys`는 Aurora에 두어 grant와 같은 트랜잭션으로 검사한다. DynamoDB에는 `utterances`·`observations`·결과 뷰·주간 집계 항목처럼 양이 많고 키로 읽는 자료를 둔다. #7의 "분석 작업 상태는 DynamoDB" 결정을 바꾸며 SPEC "저장 계층"에 반영했다. 이 배치로도 결과 본문(DynamoDB·S3) 쓰기는 Aurora 트랜잭션에 들어가지 않으므로, SPEC의 저장소 간 철회 경합은 그대로 남는다. 결과 쓰기 순서와 노출 조건은 별도로 설계한다 |
 | D6 | S3 버전 고정 | 계약의 `InputRef`·`ArtifactRef`·`Snapshot`이 S3 `version_id`로 입력을 고정한다 | SPEC은 원음 버킷 버전 관리를 "끄거나 이전 버전을 바로 만료"한다고 적었다. 계약을 유지하려면 버전 관리를 켜고, 이전 버전 만료 규칙과 삭제 시 모든 버전 삭제를 함께 둔다. 확정되면 SPEC 문구를 고친다 |
 | D7 | 관계 목록 조회 | `GET /me`는 `Actor`만 반환하고 관계 목록 경로가 없다 | 가족 화면을 위해 `GET /connections`(내 관계 목록)를 추가하거나 `/me` 응답에 관계 요약을 넣는다 |
 | D8 | MVP 범위 | 28개 operation 전체가 P0 후보 | 발표 범위(umsal-pwa #17)에 맞춰 1차 구현 operation을 고른다. 결정 전에는 계약에서 operation을 삭제하지 않는다 |
@@ -102,6 +102,6 @@ umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변�
 
 ## 7. 다음 단계
 
-1. D5·D9를 먼저 정한다(D1은 확정). D5는 #7 결정을 바꾸므로 사용자 확인 후 SPEC을, D9는 AGENTS를 갱신한다.
+1. D9를 먼저 정한다(D1·D5는 확정, D5는 SPEC "저장 계층"에 반영). D9는 AGENTS를 갱신한다.
 2. D2·D7을 반영한 계약을 이 저장소 `contracts/openapi.yaml`로 옮긴다(별도 이슈).
 3. umsal-pwa #17의 발표 범위로 1차 operation(D8)을 정한 뒤 DB 스키마(umsal-pwa #23)와 인증(#24)을 시작한다.
