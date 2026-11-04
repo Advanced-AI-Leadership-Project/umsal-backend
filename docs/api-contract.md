@@ -2,7 +2,7 @@
 
 2026-11-04 · 이슈 #9 · 대응: umsal-pwa #20 (DEV-04)
 
-**초안이다.** 아래 업무 API는 모두 미구현이며 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 이 문서는 계약 차이와 결정 항목을 정리할 뿐 OpenAPI 파일을 바꾸지 않는다.
+**초안이다.** 아래 업무 API는 모두 미구현이며 "결정 필요" 항목은 "확정"으로 표시한 D1을 빼고 사용자·팀 확인 전까지 확정이 아니다. 이 문서는 계약 차이와 결정 항목을 정리할 뿐 OpenAPI 파일을 바꾸지 않는다.
 
 ## 1. 기준 원본
 
@@ -20,16 +20,18 @@
 | 실행 | `GET /health` | umsal-backend | 구현. 프로세스 생존만 응답 |
 | 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-pwa `services/api` | 구현. ready는 로컬 PostgreSQL `SELECT 1` |
 | 실행 | `GET /api/push/config`, `POST·DELETE /api/push/subscription`, `POST /api/push/test` | umsal-pwa `services/api` | 테스트 채널만 구현(기본 비활성) |
-| 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | 미정(결정 D1) | 미구현 |
-| 목표 | worker operation 4개(`/internal/worker/jobs/{id}/claim·heartbeat·complete·fail`) | 미정(결정 D1) | 미구현 |
+| 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | umsal-backend (D1 확정) | 미구현 |
+| 목표 | worker operation 4개(`/internal/worker/jobs/{id}/claim·heartbeat·complete·fail`) | umsal-backend (D1 확정) | 미구현 |
 
 PWA 화면은 같은 출처의 `/api/health/{live,ready}`를 호출하고 `service == "api"`, ready의 `checks.database == "ok"`를 확인한다. 이 백엔드의 `/health`는 경로와 응답 모양이 달라 그대로는 PWA와 연결되지 않는다(결정 D2).
 
 ## 3. 결정 필요 항목
 
+D1은 확정됐고, D2~D9는 미확정이다.
+
 | ID | 항목 | 현재 상태 | 권장안 |
 |---|---|---|---|
-| D1 | 업무 API를 구현할 저장소와 계약 원본 위치 | 목표 계약은 PWA 저장소에 있고, PWA 저장소에도 `services/api`(FastAPI)가 있다 | 업무 API는 umsal-backend가 구현한다. 계약 원본은 이 저장소 `contracts/openapi.yaml`로 옮기고, PWA는 이를 읽어 타입을 만든다. PWA `services/api`는 health·테스트 push 데모로 한정한다 |
+| D1 | 업무 API를 구현할 저장소와 계약 원본 위치 | 목표 계약은 PWA 저장소에 있고, PWA 저장소에도 `services/api`(FastAPI)가 있다 | **확정(2026-11-04, 사용자 결정):** 업무 API는 umsal-backend가 구현한다. 후속: 계약 원본을 이 저장소 `contracts/openapi.yaml`로 옮기고(별도 이슈), PWA는 이를 읽어 타입을 만든다. PWA `services/api`는 health·테스트 push 데모로 한정하는 것을 권장하며, 그 범위 조정은 umsal-pwa에서 정한다 |
 | D2 | 기본 경로와 health | 백엔드 `/health`, PWA `/api/health/*` | 백엔드가 `/api` 접두사 아래에서 `GET /api/health/live`·`GET /api/health/ready`를 PWA와 같은 응답 모양으로 제공한다. ready의 `checks`는 Aurora·DynamoDB를 따로 표시한다. 기존 `/health`는 배포 확인용으로 유지할지 함께 정한다 |
 | D3 | 사용자 인증 | 원안은 Cognito access token(Bearer) | 원안 유지. PWA는 Cognito 관리형 로그인 + 인가 코드·PKCE를 쓴다. 토큰 저장 위치(메모리/세션)는 umsal-pwa #24·#25에서 정한다 |
 | D4 | 알림 기기 등록 | `POST /devices`가 `platform: ANDROID`, FCM `push_token` 전제 | PWA는 Web Push 구독(`endpoint`, `keys.p256dh`, `keys.auth`)을 쓴다. `DeviceRegistration`을 웹 구독 형태로 바꾸거나 별도 `/push-subscriptions`로 분리한다. 알림 방식 결정(umsal-pwa #52) 뒤 확정한다 |
@@ -89,7 +91,7 @@ PWA 화면은 같은 출처의 `/api/health/{live,ready}`를 호출하고 `servi
 
 ## 6. 계약 변경 기준
 
-umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변경 기준" 제안이다. D1이 정해지면 원본 저장소에 같은 규칙을 둔다.
+umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변경 기준" 제안이다. D1에 따라 계약 원본을 이 저장소로 옮길 때 같은 규칙을 함께 둔다.
 
 1. OpenAPI를 바꾸는 PR은 같은 PR에서 관련 JSON 예시(`contracts/examples`)와 정적 계약 검사를 갱신한다.
 2. 필드 삭제·이름 변경·enum 값 삭제·필수 필드 추가는 호환성을 깨는 변경이다. `info.version`의 주 버전을 올리고, PR에 PWA 측 후속 작업을 적는다(AGENTS "환경과 계약").
@@ -100,6 +102,6 @@ umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변�
 
 ## 7. 다음 단계
 
-1. D1·D5·D9를 먼저 정한다. D5는 #7 결정을 바꾸므로 사용자 확인 후 SPEC을, D9는 AGENTS를 갱신한다.
+1. D5·D9를 먼저 정한다(D1은 확정). D5는 #7 결정을 바꾸므로 사용자 확인 후 SPEC을, D9는 AGENTS를 갱신한다.
 2. D2·D7을 반영한 계약을 이 저장소 `contracts/openapi.yaml`로 옮긴다(별도 이슈).
 3. umsal-pwa #17의 발표 범위로 1차 operation(D8)을 정한 뒤 DB 스키마(umsal-pwa #23)와 인증(#24)을 시작한다.

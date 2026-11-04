@@ -2,7 +2,7 @@
 
 ## 목표 구조
 
-엄살 PWA(`Advanced-AI-Leadership-Project/umsal-pwa`)가 호출하는 서버리스 백엔드다.
+엄살 PWA(`Advanced-AI-Leadership-Project/umsal-pwa`)가 호출하는 서버리스 백엔드다. PWA 업무 API(사용자·worker operation 전체)는 이 저장소에서 구현할 예정이다(2026-11-04 결정, 아직 미구현, [API 계약 초안](docs/api-contract.md) D1).
 
 | 계층 | 선택 |
 |---|---|
@@ -14,7 +14,7 @@
 | 리전 | ap-southeast-2 (Sydney) 단일 리전 |
 
 제품 불변조건(동의 grant·공유 scope·철회 후 비노출 등)은 [AGENTS.md](AGENTS.md)의 "제품 불변조건"을 따른다.
-PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 정합성 초안](docs/api-contract.md)을 따른다(초안, 미확정).
+PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 정합성 초안](docs/api-contract.md)을 따른다(초안. D1만 확정, 나머지는 미확정).
 
 ## 저장 계층
 
