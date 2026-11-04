@@ -22,9 +22,9 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 
 | 저장소 | 저장 내용 | 선택 이유 |
 |---|---|---|
-| Aurora PostgreSQL | 사용자·가족 관계·동의 grant·공유 scope, 그리고 상태·fencing을 정하는 녹음(recordings)·분석 작업(analysis_jobs)·화자 확인(speaker_assignments)·삭제 작업(deletion_jobs)·outbox·멱등 키 | 관계와 제약(외래 키·유일성)이 필요하다. 동의 확인과 작업 상태 확정을 한 트랜잭션으로 묶어야 철회 직후의 결과 확정을 막을 수 있다 |
+| Aurora PostgreSQL | 사용자·가족 관계·동의 grant·공유 scope, 그리고 상태·fencing을 정하는 녹음(recordings)·분석 작업(analysis_jobs)·화자 확인(speaker_assignments)·삭제 작업(deletion_jobs)·outbox·멱등 키 | 관계와 제약(외래 키·유일성)이 필요하다. 동의 확인과 작업 상태 확정을 한 트랜잭션으로 묶어야 철회 직후의 작업 상태 확정을 막을 수 있다(결과 본문 경합은 아래 불변조건 참조) |
 | DynamoDB | 전사 발화(utterances)·분석 관찰(observations)·결과 뷰·주간 집계 항목 | 양이 많고 키로 읽는 결과 본문. 어떤 결과가 유효한지는 Aurora의 작업 상태가 정한다 |
-| S3 | 원음 파일·작업 산출물 | DynamoDB 항목 400KB 제한을 넘는 파일. 보관 기한은 수명 주기 규칙으로 관리한다 |
+| S3 | 원음 파일·작업 산출물(작업자의 쓰기 방식은 [API 계약 초안](docs/api-contract.md) D9에서 정한다) | DynamoDB 항목 400KB 제한을 넘는 파일. 보관 기한은 수명 주기 규칙으로 관리한다 |
 
 ### 저장소를 넘나드는 불변조건
 
