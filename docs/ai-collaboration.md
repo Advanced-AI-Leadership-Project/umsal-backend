@@ -9,12 +9,12 @@
 |---|---|
 | GitHub 저장소·main·이슈·PR·작업 기록 | 별도 clone 또는 worktree와 작업 브랜치 |
 | Python/uv 버전·`uv.lock`·검사 명령 | 개인 `.env`·GitHub 인증·AWS 자격 증명(SSO 캐시) |
-| SPEC·AGENTS·PR/이슈 템플릿 | 로컬 서버 포트·로컬 DynamoDB·테스트 데이터 |
+| SPEC·AGENTS·PR/이슈 템플릿 | 로컬 서버 포트·로컬 PostgreSQL·DynamoDB 대역·테스트 데이터 |
 
 한 폴더에서 여러 에이전트가 동시에 checkout·stage·commit하면 서로의 변경이 섞인다. 동시 작업은 각자 별도 clone 또는 worktree에서 진행한다. 같은 기능에 참여하는 보조 에이전트는 담당 파일을 나누고, 커밋·푸시는 해당 작업의 담당 에이전트 한 명이 한다.
 각 에이전트는 자신의 인증으로 GitHub에 접근한다. 같은 저장소에 branch를 push하는 계정에는 Write 이상 권한이 필요하다. Read 권한은 clone·조회용이며 이 절차의 push·병합 권한을 제공하지 않는다. 계정의 실제 commit identity를 사용하고 사람이 작성한 것처럼 작성자를 위조하지 않는다. 토큰이나 로그인 정보를 저장소에 공유하지 않는다.
 
-같은 PC에서 여러 에이전트가 로컬 서버를 띄우면 기본 포트 8000이 충돌할 수 있다. 각자 `--port`를 다르게 지정한다. AWS 자원(Lambda·API Gateway·DynamoDB)은 팀이 공유하는 실제 환경이므로, 배포·삭제·테이블 변경은 이슈에 범위를 적은 담당 에이전트만 수행한다. 제품 API 연결은 각 환경의 실제 `/health` 응답으로 확인한다.
+같은 PC에서 여러 에이전트가 로컬 서버를 띄우면 기본 포트 8000이 충돌할 수 있다. 각자 `--port`를 다르게 지정한다. AWS 자원(Lambda·API Gateway·VPC·Aurora·DynamoDB·S3)은 팀이 공유하는 실제 환경이므로, 배포·삭제·스키마·테이블·버킷 변경은 이슈에 범위를 적은 담당 에이전트만 수행한다. 제품 API 연결은 각 환경의 실제 `/health` 응답으로 확인한다.
 
 ## 2. 작업 하나는 이슈·브랜치·PR 하나
 
