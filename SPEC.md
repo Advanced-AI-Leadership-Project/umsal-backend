@@ -14,6 +14,7 @@
 | 리전 | ap-southeast-2 (Sydney) 단일 리전 |
 
 제품 불변조건(동의 grant·공유 scope·철회 후 비노출 등)은 [AGENTS.md](AGENTS.md)의 "제품 불변조건"을 따른다.
+PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 정합성 초안](docs/api-contract.md)을 따른다(초안, 미확정).
 
 ## 저장 계층
 
