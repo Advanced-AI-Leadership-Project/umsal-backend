@@ -2,7 +2,7 @@
 
 ## 목표 구조
 
-엄살 PWA(`Advanced-AI-Leadership-Project/umsal-pwa`)가 호출하는 서버리스 백엔드다.
+엄살 PWA(`Advanced-AI-Leadership-Project/umsal-pwa`)가 호출하는 서버리스 백엔드다. PWA 업무 API(사용자·worker operation 전체)는 이 저장소가 구현한다(2026-11-04 결정, [API 계약 초안](docs/api-contract.md) D1).
 
 | 계층 | 선택 |
 |---|---|
