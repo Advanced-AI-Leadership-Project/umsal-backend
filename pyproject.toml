@@ -1,7 +1,7 @@
 [project]
 name = "umsal-backend"
 version = "0.1.0"
-description = "엄살 백엔드 - FastAPI 서버리스(API Gateway, Lambda, DynamoDB)"
+description = "엄살 백엔드 - FastAPI 서버리스(API Gateway, Lambda, Aurora PostgreSQL, DynamoDB, S3)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115,<1",
