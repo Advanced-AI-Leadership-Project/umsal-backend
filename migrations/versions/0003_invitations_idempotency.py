@@ -3,9 +3,10 @@
 - invitations: only the SHA-256 of the invite code is stored. An invitation is accepted
   at most once and expires.
 - idempotency_keys: one row per (actor, route, key). A replay with the same request
-  hash returns the stored response; a different hash is a 409. Rows expire and are
-  removed lazily, so the raw invite code inside a stored createInvitation response is
-  not kept beyond its expiry.
+  hash returns the stored response; a different hash is a 409. Rows expire after 24h
+  and are removed lazily on the same actor's next keyed request; until a scheduled
+  purge exists, an expired row (and the raw invite code in a stored createInvitation
+  response) can remain if that actor never returns.
 
 Revision ID: 0003
 Revises: 0002

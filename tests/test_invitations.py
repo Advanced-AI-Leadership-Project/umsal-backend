@@ -259,3 +259,75 @@ def test_request_hash_is_canonical():
 
 def test_code_hash_uses_normalized_code():
     assert code_hash("abcde-fghjk") == code_hash("ABCDEFGHJK")
+
+
+# --- review follow-ups -------------------------------------------------------------
+
+
+def test_code_collision_is_retried(client, monkeypatch):
+    codes = iter(["AAAAAAAAAA", "AAAAAAAAAA", "BBBBBBBBBB"])
+    monkeypatch.setattr("umsal_backend.invitations.new_invite_code", lambda: next(codes))
+    first = _invite(client, key="collide-key-1").json()
+    second = _invite(client, key="collide-key-2").json()
+    assert first["invite_code"] == "AAAAAAAAAA"
+    assert second["invite_code"] == "BBBBBBBBBB"
+
+
+def test_persistent_collision_is_retryable_503(client, monkeypatch):
+    monkeypatch.setattr("umsal_backend.invitations.new_invite_code", lambda: "CCCCCCCCCC")
+    assert _invite(client, key="collide-key-1").status_code == 201
+    response = _invite(client, key="collide-key-2")
+    _assert_error(response, 503, "TEMPORARILY_UNAVAILABLE")
+    assert response.json()["retryable"] is True
+
+
+def test_accept_key_is_scoped_per_actor(client):
+    ticket = _invite(client).json()
+    assert _accept(client, ticket["invitation_id"], ticket["invite_code"]).status_code == 200
+    # Another user reusing the same key gets no replay of the first user's connection.
+    other = _accept(client, ticket["invitation_id"], ticket["invite_code"], sub="other")
+    _assert_error(other, 409, "INVALID_STATE")
+
+
+def test_without_the_code_accepted_or_expired_invitations_are_404(client, migrated_db):
+    accepted = _invite(client, key="invite-key-1").json()
+    _accept(client, accepted["invitation_id"], accepted["invite_code"])
+    expired = _invite(client, key="invite-key-2").json()
+    with psycopg.connect(migrated_db, autocommit=True) as connection:
+        connection.execute(
+            "UPDATE invitations SET created_at = now() - interval '2 days', "
+            "expires_at = now() - interval '1 day' WHERE id = %s",
+            (expired["invitation_id"],),
+        )
+    for ticket, key in ((accepted, "probe-key-1"), (expired, "probe-key-2")):
+        probe = _accept(client, ticket["invitation_id"], "WRONGCODE1", sub="prober", key=key)
+        _assert_error(probe, 404, "NOT_FOUND")
+
+
+def test_disconnected_pair_can_reconnect_with_new_invitation(client, migrated_db):
+    first = _invite(client, key="invite-key-1").json()
+    _accept(client, first["invitation_id"], first["invite_code"], key="accept-key-1")
+    with psycopg.connect(migrated_db, autocommit=True) as connection:
+        connection.execute("UPDATE connections SET status = 'DISCONNECTED'")
+    second = _invite(client, key="invite-key-2").json()
+    response = _accept(client, second["invitation_id"], second["invite_code"], key="accept-key-2")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACTIVE"
+
+
+def test_concurrent_same_key_creates_one_invitation(client, migrated_db):
+    responses: list[dict] = []
+    barrier = threading.Barrier(2)
+
+    def create():
+        barrier.wait()
+        responses.append(_invite(client, key="race-key-123").json())
+
+    threads = [threading.Thread(target=create) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert responses[0] == responses[1]
+    with psycopg.connect(migrated_db) as connection:
+        assert connection.execute("SELECT count(*) FROM invitations").fetchone() == (1,)

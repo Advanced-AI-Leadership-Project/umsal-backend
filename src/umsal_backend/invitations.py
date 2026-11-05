@@ -30,6 +30,7 @@ INVITATION_LIFETIME = timedelta(hours=24)
 # Crockford base32 without I, L, O, U: easy to read aloud or type on a phone.
 CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 CODE_LENGTH = 10  # 50 bits; acceptance also needs the random 128-bit invitation id
+CODE_ATTEMPTS = 3
 
 
 class InvitationRequest(BaseModel):
@@ -83,14 +84,23 @@ def create_invitation(
     payload = (body or InvitationRequest()).model_dump(exclude_none=True)
 
     def handler() -> tuple[int, InvitationTicket]:
-        code = new_invite_code()
-        invitation_id, expires_at = db.execute(
-            "INSERT INTO invitations (code_hash, inviter_id, expires_at) "
-            "VALUES (%s, %s, now() + %s) RETURNING id, expires_at",
-            (code_hash(code), user.user_id, INVITATION_LIFETIME),
-        ).fetchone()
-        return 201, InvitationTicket(
-            invitation_id=invitation_id, invite_code=code, expires_at=expires_at
+        # code_hash is unique; a 50-bit collision is improbable but must not be a 500.
+        for _attempt in range(CODE_ATTEMPTS):
+            code = new_invite_code()
+            try:
+                with db.transaction():  # savepoint per attempt
+                    invitation_id, expires_at = db.execute(
+                        "INSERT INTO invitations (code_hash, inviter_id, expires_at) "
+                        "VALUES (%s, %s, now() + %s) RETURNING id, expires_at",
+                        (code_hash(code), user.user_id, INVITATION_LIFETIME),
+                    ).fetchone()
+            except psycopg.errors.UniqueViolation:
+                continue
+            return 201, InvitationTicket(
+                invitation_id=invitation_id, invite_code=code, expires_at=expires_at
+            )
+        raise ApiError(
+            503, "TEMPORARILY_UNAVAILABLE", "Could not create an invitation.", retryable=True
         )
 
     return run_idempotent(
@@ -118,15 +128,19 @@ def accept_invitation(
     payload = {"invitation_id": invitation_id, **body.model_dump(exclude_none=True)}
 
     def handler() -> tuple[int, Connection]:
-        # Lock the invitation so two concurrent accepts cannot both succeed.
-        row = db.execute(
-            "SELECT code_hash, inviter_id, expires_at <= now(), accepted_by "
+        # Check the code without a lock first, so wrong-code attempts cannot hold the
+        # row and delay a legitimate accept.
+        stored = db.execute(
+            "SELECT code_hash FROM invitations WHERE id = %s", (invitation_id,)
+        ).fetchone()
+        if stored is None or not hmac.compare_digest(bytes(stored[0]), code_hash(body.invite_code)):
+            raise _not_found()
+        # Then lock the invitation so two concurrent accepts cannot both succeed.
+        inviter_id, expired, accepted_by = db.execute(
+            "SELECT inviter_id, expires_at <= now(), accepted_by "
             "FROM invitations WHERE id = %s FOR UPDATE",
             (invitation_id,),
         ).fetchone()
-        if row is None or not hmac.compare_digest(bytes(row[0]), code_hash(body.invite_code)):
-            raise _not_found()
-        _hash, inviter_id, expired, accepted_by = row
         if inviter_id == user.user_id:
             raise ApiError(
                 422, "SEMANTIC_CHECK_FAILED", "An invitation cannot be accepted by its sender."
