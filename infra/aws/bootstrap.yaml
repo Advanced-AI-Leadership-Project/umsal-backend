@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private Lambda deployment artifacts for the UMSAL backend API (stack umsal-backend-bootstrap).
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/aws-deployment.md]
+    must:
+      - Build artifacts only; no audio, transcript or user data
+      - Regional resources in the selected Region (ap-southeast-2) only
+Resources:
+  Artifacts:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lambda code is uploaded per commit SHA so a previous build can be redeployed.
+        must: [Private, encrypted, HTTPS only]
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - Id: OldArtifactVersions
+            Status: Enabled
+            NoncurrentVersionExpiration: {NoncurrentDays: 7}
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  ArtifactPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Artifacts
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt Artifacts.Arn, !Sub '${Artifacts.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+Outputs:
+  ArtifactBucket:
+    Description: Private Lambda artifact bucket
+    Value: !Ref Artifacts
