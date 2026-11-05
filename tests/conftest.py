@@ -126,12 +126,17 @@ def _fail_on_leaked_transactions(url: str) -> None:
     import time
 
     deadline = time.monotonic() + LEAK_GRACE_SECONDS
-    with _admin_connection(url) as connection:
+    # Not ``with``: a test may still have psycopg.Connection.commit monkeypatched here
+    # (monkeypatch is undone after this fixture), and ``with`` would call it on exit.
+    connection = _admin_connection(url)
+    try:
         while True:
             leaked = [s for s in _other_sessions(connection) if s[1] == "idle in transaction"]
             if not leaked or time.monotonic() >= deadline:
                 break
             time.sleep(0.1)
+    finally:
+        connection.close()
     if leaked:
         pytest.fail(f"test left sessions idle in a transaction: {leaked}", pytrace=False)
 

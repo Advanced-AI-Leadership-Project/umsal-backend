@@ -144,3 +144,67 @@ def test_as_target():
 def test_readiness_uses_iam_target(monkeypatch, ca_bundle):
     _iam_env(monkeypatch, ca_bundle)
     assert set(db.readiness_probes_from_env()) == {"aurora"}
+
+
+# --- get_db: the request connection is always closed (#56) ----------------------------
+
+
+class _FakeConnection:
+    """Mimics psycopg: ``with`` commits on success, rolls back on error, then closes,
+    except that a failing commit raises before close (the case that leaked sessions)."""
+
+    def __init__(self, fail_commit: bool = False):
+        self.fail_commit = fail_commit
+        self.events: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            self.events.append("rollback")
+        elif self.fail_commit:
+            self.events.append("commit-failed")
+            raise db.psycopg.OperationalError("synthetic commit failure")
+        else:
+            self.events.append("commit")
+        self.close()
+        return False
+
+    def close(self):
+        self.events.append("close")
+
+
+def _request_with(connection: _FakeConnection) -> MagicMock:
+    target = MagicMock()
+    target.connect.return_value = connection
+    request = MagicMock()
+    request.app.state.database = target
+    return request
+
+
+def test_get_db_commits_and_closes():
+    connection = _FakeConnection()
+    dependency = db.get_db(_request_with(connection))
+    assert next(dependency) is connection
+    with pytest.raises(StopIteration):
+        next(dependency)
+    assert connection.events == ["commit", "close", "close"]
+
+
+def test_get_db_closes_even_when_commit_fails():
+    connection = _FakeConnection(fail_commit=True)
+    dependency = db.get_db(_request_with(connection))
+    next(dependency)
+    with pytest.raises(db.psycopg.OperationalError, match="synthetic commit failure"):
+        next(dependency)
+    assert connection.events == ["commit-failed", "close"]
+
+
+def test_get_db_rolls_back_and_closes_when_the_handler_raises():
+    connection = _FakeConnection()
+    dependency = db.get_db(_request_with(connection))
+    next(dependency)
+    with pytest.raises(ValueError, match="handler"):
+        dependency.throw(ValueError("handler failed"))
+    assert connection.events == ["rollback", "close", "close"]

@@ -179,8 +179,15 @@ def get_db(request: Request) -> Iterator[psycopg.Connection]:
     target: DatabaseTarget | None = getattr(request.app.state, "database", None)
     if target is None:
         raise ApiError(503, "TEMPORARILY_UNAVAILABLE", "The database is not configured.")
-    with target.connect() as connection:
-        yield connection
+    connection = target.connect()
+    try:
+        with connection:
+            yield connection
+    finally:
+        # psycopg's ``with`` closes the connection only when its commit succeeds. A failed
+        # commit would otherwise leave the session open in its transaction (holding row
+        # locks) until garbage collection; closing ends the session and rolls it back (#56).
+        connection.close()
 
 
 Db = Annotated[psycopg.Connection, Depends(get_db, scope="function")]
