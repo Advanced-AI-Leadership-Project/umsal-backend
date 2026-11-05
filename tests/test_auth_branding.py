@@ -11,11 +11,24 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "infra" / "aws" / "auth.yaml"
 LOGO = ROOT / "infra" / "aws" / "branding" / "logo-symbol.png"
+FAVICON = ROOT / "infra" / "aws" / "branding" / "favicon.ico"
 
 FOREST_GREEN = "176b50ff"  # umsal-pwa docs/brand-identity.md
 PRESSED_GREEN = "10553fff"
 INK = "1b2e27ff"
-AWS_DEFAULT_BLUE = "0972d3ff"
+# Cognito's default light-mode blues (primary, pressed, hover tint, active tint).
+AWS_DEFAULT_BLUES = {"0972d3ff", "033160ff", "f2f8fdff", "d3e7f9ff"}
+
+
+def _luminance(color: str) -> float:
+    channels = [int(color[i : i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _contrast(foreground: str, background: str) -> float:
+    high, low = sorted((_luminance(foreground), _luminance(background)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
 
 
 class _CfnLoader(yaml.SafeLoader):
@@ -70,9 +83,33 @@ def test_primary_actions_use_forest_green(branding):
 
 def test_no_aws_default_blue_left_in_light_mode(branding):
     leftovers = [
-        path for path, value in _light_values(branding["Settings"]) if value == AWS_DEFAULT_BLUE
+        path for path, value in _light_values(branding["Settings"]) if value in AWS_DEFAULT_BLUES
     ]
     assert leftovers == []
+
+
+def test_light_mode_text_pairs_meet_wcag_aa(branding):
+    settings = branding["Settings"]
+    components = settings["components"]
+    classes = settings["componentClasses"]
+    page = components["pageBackground"]["lightMode"]["color"]
+    form = components["form"]["lightMode"]["backgroundColor"]
+    primary = components["primaryButton"]["lightMode"]
+    match = classes["dropDown"]["lightMode"]["match"]
+    pairs = {
+        "primary button": (
+            primary["defaults"]["textColor"],
+            primary["defaults"]["backgroundColor"],
+        ),
+        "primary hover": (primary["hover"]["textColor"], primary["hover"]["backgroundColor"]),
+        "heading on form": (components["pageText"]["lightMode"]["headingColor"], form),
+        "body on form": (components["pageText"]["lightMode"]["bodyColor"], form),
+        "description on page": (components["pageText"]["lightMode"]["descriptionColor"], page),
+        "link on form": (classes["link"]["lightMode"]["defaults"]["textColor"], form),
+        "dropdown match": (match["itemTextColor"], match["itemBackgroundColor"]),
+    }
+    low = {name: round(_contrast(fg, bg), 2) for name, (fg, bg) in pairs.items()}
+    assert {name: ratio for name, ratio in low.items() if ratio < 4.5} == {}
 
 
 def test_form_logo_is_the_repository_logo(branding):
@@ -80,6 +117,15 @@ def test_form_logo_is_the_repository_logo(branding):
     (logo,) = [a for a in branding["Assets"] if a["Category"] == "FORM_LOGO"]
     assert (logo["ColorMode"], logo["Extension"]) == ("LIGHT", "PNG")
     assert base64.b64decode(logo["Bytes"]) == LOGO.read_bytes()
+
+
+def test_favicon_is_the_repository_icon(branding):
+    assert branding["Settings"]["components"]["favicon"]["enabledTypes"] == ["ICO"]
+    (icon,) = [a for a in branding["Assets"] if a["Category"] == "FAVICON_ICO"]
+    assert (icon["ColorMode"], icon["Extension"]) == ("LIGHT", "ICO")
+    data = base64.b64decode(icon["Bytes"])
+    assert data == FAVICON.read_bytes()
+    assert data[:4] == b"\x00\x00\x01\x00"  # ICO header: reserved 0, type 1 (icon)
 
 
 def test_template_fits_inline_cloudformation_limit():

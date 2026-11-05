@@ -144,6 +144,8 @@ Cognito managed login(로그인·회원가입 화면)은 `auth.yaml`의 `Brandin
 
 - 설정: Cognito 기본값(`describe-managed-login-branding-by-client --return-merged-resources`)에서 라이트 모드 색만 브랜드 팔레트로 바꿨다. 주요 버튼·링크·포커스는 Forest Green, 누름은 Pressed Green, 글자는 Ink·Muted, 페이지 배경은 Canvas(기본 배경 그림 끔). 라이트 모드 고정(PWA 라이트 전용), 모서리는 폼 16·버튼 12·입력 10.
 - 로고: [infra/aws/branding/logo-symbol.png](../infra/aws/branding/logo-symbol.png)(umsal-pwa `apps/web/public/brand/logo-symbol.png`, 128px, 13,232바이트)를 폼 상단에 표시한다. 템플릿에는 base64로 들어가며 `tests/test_auth_branding.py`가 저장소 파일과 같은지, 라이트 모드에 AWS 기본 파란색이 남지 않았는지 확인한다.
+- 파비콘: 로고를 48px로 줄인 PNG-in-ICO([favicon.ico](../infra/aws/branding/favicon.ico), 2,907바이트)만 쓴다(`enabledTypes: [ICO]`). `UseCognitoProvidedValues: false`라 이 두 자산 외의 Cognito 기본 자산(배경·안내 그래픽, SVG 파비콘)은 없으며, 배경 그림과 폼 그래픽(`displayGraphics`)은 껐다.
+- 대비: 테스트가 라이트 모드의 주요 글자·배경 조합(버튼, 제목, 본문, 설명, 링크, 드롭다운 선택 항목)이 WCAG AA 4.5:1 이상인지 확인한다. 비활성 주요 버튼은 Soft Sage 배경·Green 200 테두리로 흰 폼과 구분한다.
 - 템플릿이 51,200바이트를 넘으면 `aws cloudformation deploy`에 `--s3-bucket`이 필요하다(테스트로 한도 안을 확인).
 - 시연 주소에 `lang=ko`를 붙이면 화면 문구가 한국어로 나온다(managed login 지원 언어).
 
