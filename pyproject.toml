@@ -4,9 +4,12 @@ version = "0.1.0"
 description = "엄살 백엔드 - FastAPI 서버리스(API Gateway, Lambda, Aurora PostgreSQL, DynamoDB, S3)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.14,<2",
     "fastapi>=0.115,<1",
     "mangum>=0.19,<1",
+    "psycopg[binary]>=3.2,<4",
     "pyjwt[crypto]>=2.15.1,<3",
+    "sqlalchemy>=2.0,<3",
 ]
 
 [project.scripts]
