@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  DRAFT (not deployed, #38). UMSAL backend Aurora PostgreSQL serverless cluster with express
-  configuration (stack umsal-backend-database): no customer VPC, IAM-only database
-  authentication through the AWS-managed internet access gateway, scale to zero when idle.
+  DRAFT (not deployed, #40). UMSAL backend Aurora PostgreSQL serverless cluster inside the
+  private VPC (stack umsal-backend-database): IAM database authentication for the app and
+  migrations, scale to zero when idle, not publicly accessible.
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -10,13 +10,19 @@ Metadata:
     ref: [../../docs/aws-stage2-design.md, ../../SPEC.md]
     must:
       - Regional resources in the selected Region (ap-southeast-2) only
-      - Never publicly accessible with a password; express is IAM-auth only
+      - Never publicly accessible; reachable only from the backend Lambda security group
       - Synthetic data only until the retention and deletion policy (umsal-pwa 19) is settled
 Parameters:
-  ClusterIdentifier:
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: PrivateSubnetIds output of umsal-backend-network
+  DatabaseSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: DatabaseSecurityGroupId output of umsal-backend-network
+  EngineVersion:
     Type: String
-    Default: umsal-backend
-    AllowedPattern: '^[a-z][a-z0-9-]{0,61}[a-z0-9]$'
+    Default: '17.11'
+    Description: Matches the local Docker image; supports MinCapacity 0 (checked 2026-11-05)
   MaxCapacity:
     Type: Number
     Default: 4
@@ -28,46 +34,83 @@ Parameters:
     Default: 300
     MinValue: 300
     MaxValue: 86400
+  EnableDataApi:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      Turn on only for the one-time user bootstrap (rds-data execute-statement with the
+      master secret from the operator's machine), then turn off again.
+Conditions:
+  DataApiOn: !Equals [!Ref EnableDataApi, 'true']
 Resources:
+  ClusterParameters:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      Description: UMSAL Aurora PostgreSQL 17 cluster parameters
+      Family: aurora-postgresql17
+      Parameters:
+        rds.force_ssl: '1'  # explicit, not relying on the engine default
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  SubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: UMSAL backend private subnets
+      SubnetIds: !Ref PrivateSubnetIds
+      Tags:
+        - {Key: Project, Value: umsal-backend}
   Cluster:
     Type: AWS::RDS::DBCluster
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Snapshot
     Metadata:
-      # cfn-lint 1.59.0 ships a DBCluster schema without WithExpressConfiguration. The live
-      # registry schema in ap-southeast-2 has it (boolean, create-only; checked 2026-11-05
-      # with `aws cloudformation describe-type`). Only E3002 is ignored, only here. This also
-      # hides typos in other properties of this resource: run validate-template and a change
-      # set before the first create.
-      cfn-lint:
-        config:
-          ignore_checks: [E3002]
       com.aws.cloudformation.Context:
         why: >-
-          Express keeps the Lambda outside a VPC, so no NAT, VPC endpoints or Secrets
-          Manager endpoint are needed; IAM auth tokens are signed locally by the caller.
+          IAM auth tokens are signed inside the Lambda, so no Secrets Manager interface
+          endpoint is needed. The managed master password exists only for break-glass use.
         must:
           - MinCapacity 0 (auto-pause); 0.5+ ACU bills every hour (~USD 72/month at 0.5 ACU)
-          - Verify at first create that ServerlessV2ScalingConfiguration is accepted with express;
-            if rejected, remove it here and apply the same values with modify-db-cluster
+          - App and migration users authenticate with IAM; the master user is not used by code
     Properties:
-      DBClusterIdentifier: !Ref ClusterIdentifier
       Engine: aurora-postgresql
-      WithExpressConfiguration: true
+      EngineVersion: !Ref EngineVersion
+      DatabaseName: umsal
+      MasterUsername: umsal_admin
+      ManageMasterUserPassword: true
+      EnableIAMDatabaseAuthentication: true
+      StorageEncrypted: true
+      DBClusterParameterGroupName: !Ref ClusterParameters
+      EnableHttpEndpoint: !If [DataApiOn, true, false]
+      DBSubnetGroupName: !Ref SubnetGroup
+      VpcSecurityGroupIds: [!Ref DatabaseSecurityGroupId]
       ServerlessV2ScalingConfiguration:
         MinCapacity: 0
         MaxCapacity: !Ref MaxCapacity
         SecondsUntilAutoPause: !Ref SecondsUntilAutoPause
+      BackupRetentionPeriod: 1
       DeletionProtection: true
       CopyTagsToSnapshot: true
       Tags:
         - {Key: Project, Value: umsal-backend}
         - {Key: created_by, Value: aurora-skill}
         - {Key: generation_model, Value: claude-opus-5-5}
+  Writer:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref Cluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+      Tags:
+        - {Key: Project, Value: umsal-backend}
 Outputs:
   ClusterEndpoint:
-    Description: Writer endpoint for IAM-authenticated connections on port 5432
+    Description: Writer endpoint (private DNS) for IAM-authenticated connections on 5432
     Value: !GetAtt Cluster.Endpoint.Address
   ClusterResourceId:
     Description: Used in the rds-db:connect IAM policy resource ARN
     Value: !GetAtt Cluster.DBClusterResourceId
+  MasterSecretArn:
+    Description: Break-glass master credentials (Secrets Manager); not used by the app
+    Value: !GetAtt Cluster.MasterUserSecret.SecretArn

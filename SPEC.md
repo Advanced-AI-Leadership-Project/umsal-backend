@@ -35,13 +35,14 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 
 ### VPC 구성 원칙
 
-2단계 설계 초안(#38, [docs/aws-stage2-design.md](docs/aws-stage2-design.md))은 Aurora express configuration으로 VPC를 쓰지 않는 구성을 제안한다. 사용자 결정 전까지 아래 원칙이 유효하다.
+2026-11-05 사용자 결정으로 이 원칙을 유지한다(Aurora express configuration은 채택하지 않음). 2단계 설계는 [docs/aws-stage2-design.md](docs/aws-stage2-design.md)(#40)를 따른다.
 
 - NAT 게이트웨이를 두지 않는 것을 기본으로 한다. DynamoDB·S3는 게이트웨이 VPC 엔드포인트(추가 요금 없음)로 연결한다.
 - Aurora 접속은 IAM 데이터베이스 인증을 우선 검토해 Secrets Manager 인터페이스 엔드포인트 비용을 피한다.
 - RDS Proxy는 DB 용량에 비례하는 추가 요금이 들므로 연결 수가 실제 문제가 될 때 도입한다. 도입 전에는 Lambda 동시성과 연결 수 한도를 함께 정한다.
 - 게이트웨이 엔드포인트가 없는 AWS 서비스(SQS·KMS 등)를 VPC 안에서 쓰게 되면 인터페이스 엔드포인트 비용을 해당 설계에 포함한다.
 - 발표·체험 기간처럼 재개 지연을 피해야 할 때만 Aurora 최소 용량을 올리고 끝나면 되돌린다.
+- VPC 안 Lambda는 인터넷에 나가지 않는다. Cognito JWKS는 배포 때 받아 Lambda 설정에 고정하고(키 교체 시 재배포), 마이그레이션은 VPC 안 전용 Lambda로 실행한다(#40).
 
 ## 현재 구현 상태
 
