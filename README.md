@@ -20,7 +20,7 @@ Docker Desktop이 켜져 있어야 한다. DB는 `127.0.0.1:5434`에만 열리�
 ```bash
 make db-up        # PostgreSQL 17 컨테이너 시작(healthy까지 대기)
 make db-migrate   # Alembic 마이그레이션 적용
-make db-test      # 실제 DB 통합 테스트(마이그레이션을 적용했다 되돌림)
+make db-test      # 실제 DB 통합 테스트(마이그레이션을 적용했다 되돌림). CI는 같은 테스트를 PostgreSQL 서비스로 항상 실행
 DATABASE_URL=postgresql://umsal:umsal_local@127.0.0.1:5434/umsal_backend make api
 make db-down      # 컨테이너 중지(데이터 볼륨은 유지)
 ```
