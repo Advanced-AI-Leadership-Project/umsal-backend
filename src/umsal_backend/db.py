@@ -8,9 +8,13 @@ credentials. On AWS it will be injected from Secrets Manager (stage 2).
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from typing import Annotated
 
 import psycopg
+from fastapi import Depends, Request
 
+from umsal_backend.errors import ApiError
 from umsal_backend.health import Probe
 
 CONNECT_TIMEOUT_SECONDS = 3
@@ -49,3 +53,19 @@ def postgres_probe(url: str) -> Probe:
 def readiness_probes_from_env() -> dict[str, Probe]:
     url = database_url()
     return {"aurora": postgres_probe(url)} if url else {}
+
+
+def get_db(request: Request) -> Iterator[psycopg.Connection]:
+    """FastAPI dependency: one connection and transaction per request.
+
+    The transaction commits when the handler returns and rolls back when it raises.
+    Connection failures surface as psycopg.OperationalError (503 handler).
+    """
+    url: str | None = getattr(request.app.state, "database_url", None)
+    if not url:
+        raise ApiError(503, "TEMPORARILY_UNAVAILABLE", "The database is not configured.")
+    with connect(url) as connection:
+        yield connection
+
+
+Db = Annotated[psycopg.Connection, Depends(get_db)]

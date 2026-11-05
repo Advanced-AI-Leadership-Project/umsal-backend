@@ -14,7 +14,7 @@
 | 리전 | ap-southeast-2 (Sydney) 단일 리전 |
 
 제품 불변조건(동의 grant·공유 scope·철회 후 비노출 등)은 [AGENTS.md](AGENTS.md)의 "제품 불변조건"을 따른다.
-PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 정합성 초안](docs/api-contract.md)을 따른다(초안. D1·D2·D3·D5·D6·D7·D9 확정, D4·D8 미확정). 계약 원본은 [contracts/openapi.yaml](contracts/openapi.yaml)이다.
+PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 정합성 초안](docs/api-contract.md)을 따른다(초안. D1·D2·D3·D5·D6·D7·D9 확정, D4·D8·D10 미확정). 계약 원본은 [contracts/openapi.yaml](contracts/openapi.yaml)이다.
 
 ## 저장 계층
 
@@ -49,9 +49,10 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 | `GET /api/health/live`·`GET /api/health/ready` | 구현(D2, #17). PWA와 같은 응답 모양. ready는 `checks.aurora`·`checks.dynamodb`를 따로 표시하고 둘 다 `ok`일 때만 `ready`(PWA 호환 `checks.database`도 그때만 `ok`). Aurora·DynamoDB 연결 확인은 아직 없어 `not_configured`로 응답하므로 현재 ready는 항상 503 `not_ready`다 |
 | Lambda 핸들러 | 구현. 합성 API Gateway HTTP API v2 이벤트로만 테스트했다 |
 | AWS 배포(IaC) | 1단계 구현(#19). API Gateway HTTP API + Lambda를 CloudFormation으로 배포했고 배포 주소의 health 응답을 확인했다([배포 문서](docs/aws-deployment.md)). VPC·Aurora·DynamoDB·S3·Cognito·CloudFront 연결은 미구현 |
-| 사용자 인증 | Cognito access token 검증 의존성 구현(D3, #21). 합성 키·토큰으로만 테스트했다. 사용자 풀이 없고 배포 환경에 설정이 없어, 인증이 필요한 경로는 503으로 막힌다(현재 그런 경로는 없음). 사용자 DB 매핑 미구현 |
+| 사용자 인증 | Cognito access token 검증 의존성 구현(D3, #21). 합성 키·토큰으로만 테스트했다. 사용자 풀이 없고 배포 환경에 설정이 없어 인증이 필요한 경로는 503으로 막힌다 |
+| 사용자·관계 조회 | `GET /api/me`(첫 요청 시 사용자 생성), `GET /api/connections`(cursor 페이지), `GET /api/connections/{id}`(비참여자 404) 구현(#29). `users`·`connections` 마이그레이션 `0002`. 실제 PostgreSQL 테스트만 거쳤고 AWS에는 미배포. 관계를 만드는 초대 수락·동의·연결 해제는 미구현, 표시 이름은 빈 문자열(D10) |
 | 동의·분석 | 미구현 |
-| PostgreSQL 연결·마이그레이션 | 기반 구현(#23). 로컬 Docker PostgreSQL 17, `DATABASE_URL` 연결(연결 3초·쿼리 3초 제한), ready의 `checks.aurora` 실제 확인, Alembic 빈 기준 revision. 업무 테이블과 AWS Aurora는 미구현 |
+| PostgreSQL 연결·마이그레이션 | 기반 구현(#23). 로컬 Docker PostgreSQL 17, `DATABASE_URL` 연결(연결 3초·쿼리 3초 제한), ready의 `checks.aurora` 실제 확인, Alembic(`0001` 기준, `0002` users·connections). 나머지 업무 테이블과 AWS Aurora는 미구현 |
 | DynamoDB·S3 저장 | 미구현 |
 | API 계약 | 원본을 `contracts/openapi.yaml`(v0.3.0)로 이관(#25). 정적 검사와 구현된 health 응답의 스키마 검사를 테스트로 실행한다. 업무 operation 28개는 계약만 있고 미구현 |
 | PWA 연동 | health 경로만 PWA 계약에 맞춤. 업무 API와 실제 연결 확인은 미구현 |
