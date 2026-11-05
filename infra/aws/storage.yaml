@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  UMSAL backend storage foundation (stack umsal-backend-storage, #52): one DynamoDB table for
+  result bodies and the private audio bucket. Item key design and the upload/job APIs come
+  after the MVP scope decision (D8); nothing here depends on them.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/aws-stage3-design.md, ../../SPEC.md, ../../docs/api-contract.md]
+    must:
+      - Regional resources in the selected Region (ap-southeast-2) only; no cross-Region replication
+      - Synthetic data only until the retention and deletion policy (umsal-pwa 19) is settled
+      - Grants and job state stay in PostgreSQL; this table never decides what may be shown
+Resources:
+  ResultsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          SPEC storage layout: utterances, observations, result views and weekly items.
+          Generic pk/sk keys so the D8-dependent item design needs no table replacement.
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}
+        - {AttributeName: sk, AttributeType: S}
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+      TimeToLiveSpecification: {AttributeName: expires_at, Enabled: true}
+      DeletionProtectionEnabled: true
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  AudioBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          Raw audio and job artifacts (SPEC). Versioning pins job inputs by version_id (D6);
+          a deletion removes every version explicitly, and the lifecycle rule below is only
+          the backstop for versions that a deletion run did not reach.
+        must: [Private, encrypted, HTTPS only, no public access, never the umsal-demo-storage bucket]
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      OwnershipControls:
+        Rules:
+          - {ObjectOwnership: BucketOwnerEnforced}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - Id: ShortLivedOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration: {NoncurrentDays: 1}
+            ExpiredObjectDeleteMarker: true
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  AudioBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AudioBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt AudioBucket.Arn, !Sub '${AudioBucket.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+Outputs:
+  ResultsTableName:
+    Description: DynamoDB table for result bodies (API parameter DynamoTableName)
+    Value: !Ref ResultsTable
+  ResultsTableArn:
+    Value: !GetAtt ResultsTable.Arn
+  AudioBucketName:
+    Description: Private audio bucket (no API access until the upload API, after D8)
+    Value: !Ref AudioBucket

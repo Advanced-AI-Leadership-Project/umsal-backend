@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from umsal_backend import __version__, connections, consents, disconnect, identity, invitations
 from umsal_backend.auth import TokenVerifier
 from umsal_backend.db import DatabaseTarget, as_target, database_from_env, postgres_probe
+from umsal_backend.dynamo import dynamodb_probe_from_env
 from umsal_backend.errors import install_error_handlers
 from umsal_backend.health import DependencyName, Probe, create_health_router
 
@@ -36,11 +37,16 @@ def create_app(
         # DynamoDB or other dependencies; see /api/health/ready for those.
         return {"status": "ok", "version": __version__}
 
-    # DATABASE_URL enables the Aurora/PostgreSQL check; DynamoDB has no probe yet.
+    # DATABASE_URL/DB_HOST enable the PostgreSQL check, DYNAMODB_TABLE the DynamoDB one.
     # The readiness check reuses the app's own target (one IAM token cache, not two).
     if readiness_probes is _FROM_ENV:
+        probes: dict[DependencyName, Probe] = {}
         database = app.state.database
-        probes = {"aurora": postgres_probe(database)} if database is not None else {}
+        if database is not None:
+            probes["aurora"] = postgres_probe(database)
+        dynamo = dynamodb_probe_from_env()
+        if dynamo is not None:
+            probes["dynamodb"] = dynamo
     else:
         probes = readiness_probes
     app.include_router(create_health_router(probes))

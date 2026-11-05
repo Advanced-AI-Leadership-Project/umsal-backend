@@ -117,5 +117,5 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 
 ## 다음 단계
 
-- DynamoDB·S3 원음 단계: 이것이 끝나야 `/api/health/ready`가 200이 된다.
+- DynamoDB·S3 원음 단계: 기반은 [aws-stage3-design.md](aws-stage3-design.md)(#52). 이것이 배포돼야 `/api/health/ready`가 200이 된다.
 - CloudFront `/api/*`를 이 API로 보낼지(경로 분리 포함) umsal-pwa와 조율
