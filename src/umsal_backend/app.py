@@ -7,11 +7,24 @@ from collections.abc import Mapping
 from fastapi import FastAPI
 
 from umsal_backend import __version__
+from umsal_backend.auth import TokenVerifier
+from umsal_backend.errors import install_error_handlers
 from umsal_backend.health import DependencyName, Probe, create_health_router
 
+_FROM_ENV = object()
 
-def create_app(readiness_probes: Mapping[DependencyName, Probe] | None = None) -> FastAPI:
+
+def create_app(
+    readiness_probes: Mapping[DependencyName, Probe] | None = None,
+    token_verifier: TokenVerifier | None | object = _FROM_ENV,
+) -> FastAPI:
     app = FastAPI(title="UMSAL Backend", version=__version__)
+    # User APIs read this through umsal_backend.auth.require_principal. Without
+    # Cognito settings it stays None and protected routes answer 503.
+    app.state.token_verifier = (
+        TokenVerifier.from_env() if token_verifier is _FROM_ENV else token_verifier
+    )
+    install_error_handlers(app)
 
     @app.get("/health", tags=["ops"])
     def health() -> dict[str, str]:
