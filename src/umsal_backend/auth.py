@@ -30,6 +30,8 @@ ALGORITHM = "RS256"
 LEEWAY_SECONDS = 30
 JWKS_TIMEOUT_SECONDS = 3
 JWKS_CACHE_SECONDS = 3600
+JWKS_REFRESH_COOLDOWN_SECONDS = 30
+_JWKS_FAILURES = (jwt.PyJWTError, ValueError, OSError)
 
 # Resolves a JWKS ``kid`` to a public key. Raises KeyNotFound or JwksUnavailable.
 KeyResolver = Callable[[str], Any]
@@ -92,6 +94,8 @@ def jwks_key_resolver(settings: CognitoSettings) -> KeyResolver:
         cache_keys=True,
         lifespan=JWKS_CACHE_SECONDS,
         timeout=JWKS_TIMEOUT_SECONDS,
+        # Random kids can force at most one JWKS refetch per cooldown window.
+        cooldown_duration=JWKS_REFRESH_COOLDOWN_SECONDS,
     )
 
     def resolve(kid: str) -> Any:
@@ -100,9 +104,17 @@ def jwks_key_resolver(settings: CognitoSettings) -> KeyResolver:
         except jwt.PyJWKClientConnectionError as exc:
             raise JwksUnavailable from exc
         except jwt.PyJWKClientError as exc:
-            # Raised for an unknown kid after a refresh, and for an unusable JWKS.
-            if "Unable to find a signing key" in str(exc):
-                raise KeyNotFound from exc
+            # Unknown kid, or a JWKS without usable keys. Tell them apart by reading
+            # the (cached) key set rather than parsing the library's message text.
+            try:
+                published = {key.key_id for key in client.get_signing_keys()}
+            except _JWKS_FAILURES as inner:
+                raise JwksUnavailable from inner
+            if kid in published:
+                raise JwksUnavailable from exc
+            raise KeyNotFound from exc
+        except _JWKS_FAILURES as exc:
+            # Malformed JSON, invalid key set or unsupported key type from the endpoint.
             raise JwksUnavailable from exc
 
     return resolve
@@ -148,13 +160,15 @@ class TokenVerifier:
         if claims.get("token_use") != "access":
             raise InvalidToken
         client_id = claims.get("client_id")
-        if client_id not in self.settings.client_ids:
+        if not isinstance(client_id, str) or client_id not in self.settings.client_ids:
             raise InvalidToken
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject:
             raise InvalidToken
         username = claims.get("username")
-        groups = claims.get("cognito:groups") or []
+        groups = claims.get("cognito:groups")
+        if not isinstance(groups, list):
+            groups = []
         return Principal(
             subject=subject,
             username=username if isinstance(username, str) else None,

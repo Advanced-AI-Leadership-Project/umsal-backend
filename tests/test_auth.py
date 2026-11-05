@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import io
+import json
 import time
 from unittest.mock import patch
+from urllib.error import URLError
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from jwt.algorithms import RSAAlgorithm
 
 from umsal_backend.app import create_app
 from umsal_backend.auth import (
@@ -244,31 +248,114 @@ def test_app_reads_verifier_from_env(monkeypatch):
     assert create_app().state.token_verifier is None
 
 
-class _FakeSigningKey:
-    key = "public-key"
+def _jwks(*kids, key=_KEY):
+    entries = []
+    for kid in kids:
+        jwk = RSAAlgorithm.to_jwk(key.public_key(), as_dict=True)
+        entries.append(jwk | {"kid": kid, "use": "sig", "alg": "RS256"})
+    return {"keys": entries}
+
+
+class _FakeOpener:
+    """Stands in for urllib's opener so PyJWKClient's own fetch/cache/cooldown code runs."""
+
+    def __init__(self, document):
+        self.document = document
+        self.calls = 0
+
+    def open(self, _request, timeout):
+        assert timeout == 3
+        self.calls += 1
+        value = self.document["value"]
+        if isinstance(value, Exception):
+            raise value
+        body = value if isinstance(value, bytes) else json.dumps(value).encode()
+        return io.BytesIO(body)
+
+
+@pytest.fixture
+def jwks_endpoint():
+    document = {"value": _jwks(KID)}
+    opener = _FakeOpener(document)
+    with patch("jwt.jwks_client.urllib.request.build_opener", return_value=opener):
+        yield document, opener
+
+
+def _real_client():
+    return _client(TokenVerifier(SETTINGS, jwks_key_resolver(SETTINGS)))
+
+
+def test_real_jwks_client_verifies_token_end_to_end(jwks_endpoint):
+    response = _get(_real_client(), _token())
+    assert response.status_code == 200
+    assert response.json()["subject"] == "00000000-0000-4000-8000-000000000001"
+
+
+def test_real_jwks_client_unknown_kid_is_401_and_refetch_is_rate_limited(jwks_endpoint):
+    _document, opener = jwks_endpoint
+    client = _real_client()
+    for _ in range(5):
+        _assert_unauthenticated(_get(client, _token(kid="random-kid")))
+    # One initial fetch; refetches for unknown kids wait for the 30s cooldown.
+    assert opener.calls == 1
 
 
 @pytest.mark.parametrize(
-    ("error", "expected"),
+    "failure",
     [
-        (jwt.PyJWKClientConnectionError("down"), JwksUnavailable),
-        (jwt.PyJWKClientError('Unable to find a signing key that matches: "x"'), KeyNotFound),
-        (
-            jwt.PyJWKClientError("The JWKS endpoint did not contain any signing keys"),
-            JwksUnavailable,
-        ),
+        {"keys": []},
+        {"not-keys": True},
+        {"keys": [_jwks(KID)["keys"][0] | {"use": "enc"}]},
+        b"<html>not json</html>",
+        URLError("timed out"),
     ],
+    ids=["empty", "malformed", "no-signing-keys", "not-json", "unreachable"],
 )
-def test_jwks_resolver_maps_client_errors(error, expected):
-    with patch("umsal_backend.auth.jwt.PyJWKClient") as client_cls:
-        client_cls.return_value.get_signing_key.side_effect = error
-        resolve = jwks_key_resolver(SETTINGS)
-        with pytest.raises(expected):
-            resolve("kid")
-    client_cls.assert_called_once_with(SETTINGS.jwks_url, cache_keys=True, lifespan=3600, timeout=3)
+def test_real_jwks_client_broken_endpoint_is_503(jwks_endpoint, failure):
+    document, _opener = jwks_endpoint
+    document["value"] = failure
+    response = _get(_real_client(), _token())
+    assert response.status_code == 503
+    assert response.json()["code"] == "TEMPORARILY_UNAVAILABLE"
+    assert response.json()["retryable"] is True
 
 
-def test_jwks_resolver_returns_key():
+def test_jwks_client_is_configured_with_timeout_cache_and_cooldown():
     with patch("umsal_backend.auth.jwt.PyJWKClient") as client_cls:
-        client_cls.return_value.get_signing_key.return_value = _FakeSigningKey()
-        assert jwks_key_resolver(SETTINGS)("kid") == "public-key"
+        jwks_key_resolver(SETTINGS)
+    client_cls.assert_called_once_with(
+        SETTINGS.jwks_url, cache_keys=True, lifespan=3600, timeout=3, cooldown_duration=30
+    )
+
+
+def test_kid_listed_but_unusable_is_503():
+    with patch("umsal_backend.auth.jwt.PyJWKClient") as client_cls:
+        client = client_cls.return_value
+        client.get_signing_key.side_effect = jwt.PyJWKClientError("unexpected")
+        client.get_signing_keys.return_value = [type("K", (), {"key_id": "kid"})()]
+        with pytest.raises(JwksUnavailable):
+            jwks_key_resolver(SETTINGS)("kid")
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        _claims(iat=int(time.time()) + 600),
+        _claims(nbf=int(time.time()) + 600),
+        _claims(client_id=[CLIENT]),
+    ],
+    ids=["future-iat", "future-nbf", "client-id-list"],
+)
+def test_more_invalid_claims_are_401(claims):
+    _assert_unauthenticated(_get(_client(), _token(claims)))
+
+
+def test_non_list_groups_are_ignored():
+    response = _get(_client(), _token(_claims(**{"cognito:groups": 7})))
+    assert response.status_code == 200
+    assert response.json()["groups"] == []
+
+
+def test_unconfigured_auth_is_503_even_without_header():
+    response = _client(configured=False).get("/_test/whoami")
+    assert response.status_code == 503
