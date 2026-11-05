@@ -5,6 +5,10 @@ analysis of their speech, which result scopes the recipient may see, and whether
 recipient may see a short verification preview. Rows start fully denied (version 1)
 when a connection is created; only the subject can change their own row.
 
+Not enforced in the database (the API writes only derived values): that subject and
+recipient are the connection's participants, and that sharing_scopes has no duplicates
+(the API stores a canonical, de-duplicated order).
+
 Revision ID: 0004
 Revises: 0003
 """

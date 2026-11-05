@@ -73,12 +73,17 @@ def _ordered(scopes) -> list[str]:
 
 
 def create_default_grants(db: psycopg.Connection, connection_id: str, a: str, b: str) -> None:
-    """Fully denied, version 1 grants for both directions of a new connection."""
+    """Fully denied, version 1 grants for both directions of a new connection.
+
+    Rows are always inserted in the same (sorted) order whoever calls, so two
+    participants creating them concurrently cannot deadlock on the primary key.
+    """
+    low, high = sorted((a, b))
     db.execute(
         "INSERT INTO consent_grants (connection_id, subject_id, recipient_id) "
-        "VALUES (%(c)s, %(a)s, %(b)s), (%(c)s, %(b)s, %(a)s) "
+        "VALUES (%(c)s, %(low)s, %(high)s), (%(c)s, %(high)s, %(low)s) "
         "ON CONFLICT (connection_id, subject_id) DO NOTHING",
-        {"c": connection_id, "a": a, "b": b},
+        {"c": connection_id, "low": low, "high": high},
     )
 
 
@@ -96,6 +101,7 @@ def _participation(
         raise ApiError(404, "NOT_FOUND", "The resource was not found.")
     partner_id, status = row
     # Connections made before grants existed (or inserted directly) get default rows.
+    # This makes GET write once per such connection; it is not a read-only endpoint.
     create_default_grants(db, connection_id, user_id, partner_id)
     return partner_id, status
 
@@ -165,7 +171,8 @@ def update_consents(
     payload = {"connection_id": connection_id, **body.model_dump(exclude_none=True)}
 
     def handler() -> tuple[int, ConsentView]:
-        # FOR SHARE on the connection: a concurrent disconnect cannot interleave.
+        # Lock order for anything touching grants: connection row first, then grant rows.
+        # FOR SHARE here; a disconnect must take FOR UPDATE on the connection, then grants.
         _partner_id, status = _participation(db, connection_id, user.user_id, lock=True)
         if status != "ACTIVE":
             raise ApiError(409, "INVALID_STATE", "The connection is not active.")

@@ -286,3 +286,60 @@ def test_schema_rejects_unknown_scope_and_self_grant(client, connected, migrated
                 "UPDATE consent_grants SET recipient_id = subject_id WHERE subject_id = %s",
                 (alice,),
             )
+
+
+# --- review follow-ups -------------------------------------------------------------
+
+
+def _legacy_connection(client, migrated_db, status="ACTIVE"):
+    alice = client.get("/api/me", headers=_h("alice")).json()["user_id"]
+    bob = client.get("/api/me", headers=_h("bob")).json()["user_id"]
+    low, high = sorted((alice, bob))
+    with psycopg.connect(migrated_db, autocommit=True) as connection:
+        return connection.execute(
+            "INSERT INTO connections (user_a_id, user_b_id, status) "
+            "VALUES (%s, %s, %s) RETURNING id",
+            (low, high, status),
+        ).fetchone()[0]
+
+
+def test_pending_connection_computes_false_and_rejects_updates(client, migrated_db):
+    connection_id = _legacy_connection(client, migrated_db, status="PENDING")
+    state = _get(client, connection_id, "alice").json()
+    assert state["both_analysis_allowed"] is False
+    assert state["verification_preview_allowed"] is False
+    _assert_error(_put(client, connection_id, "alice", "put-key-1"), 409, "INVALID_STATE")
+
+
+def test_concurrent_first_reads_of_legacy_connection_do_not_fail(client, migrated_db):
+    connection_id = _legacy_connection(client, migrated_db)
+    statuses: list[int] = []
+    barrier = threading.Barrier(2)
+
+    def read(sub: str):
+        barrier.wait()
+        statuses.append(_get(client, connection_id, sub).status_code)
+
+    threads = [threading.Thread(target=read, args=(s,)) for s in ("alice", "bob")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert statuses == [200, 200]
+    with psycopg.connect(migrated_db) as connection:
+        count = connection.execute(
+            "SELECT count(*) FROM consent_grants WHERE connection_id = %s", (connection_id,)
+        ).fetchone()
+    assert count == (2,)
+
+
+def test_same_key_on_another_connection_is_409(client, connected):
+    connection_id, _alice, _bob = connected
+    ticket = client.post("/api/invitations", headers=_h("alice", "invite-key-2"), json={}).json()
+    other = client.post(
+        f"/api/invitations/{ticket['invitation_id']}/accept",
+        headers=_h("carol", "accept-key-2"),
+        json={"invite_code": ticket["invite_code"]},
+    ).json()["connection_id"]
+    assert _put(client, connection_id, "alice", "shared-key-1").status_code == 200
+    _assert_error(_put(client, other, "alice", "shared-key-1"), 409, "IDEMPOTENCY_CONFLICT")
