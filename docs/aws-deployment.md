@@ -76,5 +76,5 @@ DB·NAT·VPC가 없어 소량 요청은 무료 제공량 안에 든다. 실제 �
 
 ## 다음 단계
 
-- 2단계: 설계 초안 [aws-stage2-design.md](aws-stage2-design.md)(Aurora express·Cognito, 비용 견적). 사용자 결정 후 생성
+- 2단계: [aws-stage2-design.md](aws-stage2-design.md)(VPC·Aurora·Cognito, 비용 견적). 사용자 확인 후 생성
 - CloudFront `/api/*`를 이 API로 보낼지(경로 분리 포함) umsal-pwa와 조율
