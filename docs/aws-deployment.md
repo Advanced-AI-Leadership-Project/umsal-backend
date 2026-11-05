@@ -1,6 +1,6 @@
-# 백엔드 API AWS 배포 (1·2단계)
+# 백엔드 API AWS 배포 (1·2·3단계)
 
-기준일: 2026-11-05 · 이슈 #19(1단계), #49(2단계 기록). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). DynamoDB·S3 원음·CloudFront 연결은 아직 없다. 아래 구조·절차는 1단계 기준이다.
+기준일: 2026-11-05 · 이슈 #19(1단계), #49(2단계 기록), #54(3단계 기록). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). 3단계에서 DynamoDB 테이블과 원음 S3 버킷(기반만)을 만들어 ready가 200이 됐다([3단계 배포 기록](#3단계-배포-기록)). CloudFront 연결은 아직 없다. 아래 구조·절차는 1단계 기준이다.
 
 ## 구조
 
@@ -14,7 +14,8 @@ flowchart LR
 | 스택 | 템플릿 | 자원 |
 |---|---|---|
 | `umsal-backend-bootstrap` | [infra/aws/bootstrap.yaml](../infra/aws/bootstrap.yaml) | Lambda zip용 비공개 S3 버킷(암호화·HTTPS 강제·이전 버전 7일 만료, `Retain`) |
-| `umsal-backend-api` | [infra/aws/api.yaml](../infra/aws/api.yaml) | HTTP API, Lambda, 실행 역할(1단계: 자기 로그 쓰기만. 2단계: VPC ENI 관리와 앱 DB 사용자 하나에 대한 `rds-db:connect` 추가), 로그 그룹 2개, Errors 경보(알림 구독 없음) |
+| `umsal-backend-api` | [infra/aws/api.yaml](../infra/aws/api.yaml) | HTTP API, Lambda, 실행 역할(1단계: 자기 로그 쓰기만. 2단계: VPC ENI 관리와 앱 DB 사용자 하나에 대한 `rds-db:connect` 추가. 3단계: 결과 테이블 하나에 대한 `dynamodb:DescribeTable` 추가), 로그 그룹 2개, Errors 경보(알림 구독 없음) |
+| `umsal-backend-storage` (3단계) | [infra/aws/storage.yaml](../infra/aws/storage.yaml) | DynamoDB 결과 테이블, 원음 S3 버킷과 정책(둘 다 `Retain`). 2단계 스택은 [2단계 배포 기록](#2단계-배포-기록) 참고 |
 
 - 프로젝트 계정, 선택 리전 `ap-southeast-2`. umsal-pwa 스택(`umsal-pwa-demo*`, `umsal-demo-storage`)과 그 CloudFront는 건드리지 않는다.
 - 직접 API 주소는 네트워크 제한 없이 열려 있다. 2단계부터 health를 뺀 업무 경로는 Cognito access token이 필요하다(D3). CloudFront `/api/*` 연결 방식은 아직 umsal-pwa와 정해야 한다.
@@ -44,7 +45,7 @@ aws cloudformation deploy $P --stack-name umsal-backend-api --template-file infr
   --parameter-overrides ArtifactBucket="$B" ArtifactKey="lambda/$SHA.zip"
 ```
 
-템플릿 검사: `uvx --from cfn-lint==1.59.0 cfn-lint infra/aws/bootstrap.yaml infra/aws/api.yaml`.
+템플릿 검사: `uvx --from cfn-lint==1.59.0 cfn-lint infra/aws/*.yaml`.
 
 ## 배포 확인 기록
 
@@ -67,11 +68,11 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 |---|---|
 | S3 Object Lock·복제·접근 로그 | artifact 버킷에 과하다. 다른 리전 복제는 AGENTS의 AWS 규칙(new AWS experience: cross-Region 복제 금지)에 어긋난다 |
 | S3 HTTPS 전용·공개 ACL 금지 | 거부 정책과 공개 차단 4개 설정이 이미 있다. 규칙이 기대하는 정책 형식과 달라 걸린 것으로 본다 |
-| IAM inline policy | 1단계 판단: 권한이 자기 로그 쓰기뿐이고 umsal-pwa와 같은 방식이라 유지한다. 2단계에서 추가한 VPC ENI·`rds-db:connect`(앱 DB 사용자 하나로 한정)도 같은 inline 방식을 쓴다. DynamoDB·S3 권한을 추가할 때 다시 검토한다 |
+| IAM inline policy | 1단계 판단: 권한이 자기 로그 쓰기뿐이고 umsal-pwa와 같은 방식이라 유지한다. 2단계에서 추가한 VPC ENI·`rds-db:connect`(앱 DB 사용자 하나로 한정)와 3단계의 `dynamodb:DescribeTable`(테이블 하나로 한정)도 같은 inline 방식을 쓴다. 결과 항목·S3 읽기·쓰기 권한을 추가할 때 cfn-guard를 다시 돌려 검토한다 |
 
 ## 비용·중지·삭제
 
-1단계 자원(API Gateway·Lambda·S3)은 소량 요청이면 무료 제공량 안에 든다. 2단계의 RDS 인스턴스는 상시 과금되며 견적은 [aws-stage2-design.md 3절](aws-stage2-design.md#3-비용-견적-ap-southeast-2)을 따른다. NAT는 없다. 실제 청구는 AWS Settings > Billing에서 확인한다.
+1단계 자원(API Gateway·Lambda·S3)은 소량 요청이면 무료 제공량 안에 든다. 2단계의 RDS 인스턴스는 상시 과금되며 견적은 [aws-stage2-design.md 3절](aws-stage2-design.md#3-비용-견적-ap-southeast-2)을 따른다. 3단계의 DynamoDB·S3는 시간당 요금 없이 사용량만 과금된다([aws-stage3-design.md 3절](aws-stage3-design.md#3-비용-ap-southeast-2)). NAT는 없다. 실제 청구는 AWS Settings > Billing에서 확인한다.
 즉시 중지하려면 함수의 reserved concurrency를 0으로 바꾼다. 스택 삭제는 운영자가 판단해 별도로 실행한다. artifact 버킷은 `Retain`이라 스택 삭제 뒤에도 남으므로 버전까지 직접 정리해야 한다.
 
 ## 2단계 배포 기록
@@ -115,7 +116,29 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 - VPC 안 Lambda가 있는 스택의 삭제·롤백은 ENI 정리 때문에 20~40분 걸릴 수 있다. 그동안 같은 스택의 다른 자원(예: bootstrap의 Secrets Manager 엔드포인트)도 남아 과금된다.
 - 실패해 `ROLLBACK_COMPLETE`가 된 스택은 갱신할 수 없으므로 삭제한 뒤 다시 만든다.
 
+## 3단계 배포 기록
+
+설계는 [aws-stage3-design.md](aws-stage3-design.md)(#52). 2026-11-05에 코드 commit `3611c1e1a366acd2ca02e820a603df17e35b4988`(PR #53)로 진행했다. 두 템플릿은 생성 전에 `validate-template`을 통과했다.
+
+| 순서 | 스택 / 동작 | 결과 |
+|---|---|---|
+| 1 | `umsal-backend-storage`([storage.yaml](../infra/aws/storage.yaml)) | change set은 `ResultsTable`·`AudioBucket`·`AudioBucketPolicy` 추가만, `CREATE_COMPLETE` |
+| 2 | API zip 빌드·업로드 | `lambda/3611c1e….zip` |
+| 3 | `stage2_params.py --with-storage` | `api-params.json`에 `DynamoTableName` 추가(10개 파라미터) |
+| 4 | `umsal-backend-api` 갱신 | change set은 `ApiFunction`·`ApiIntegration`·`FunctionRole` 수정만(교체 없음), API 주소 유지 |
+
+| 요청 | 결과 |
+|---|---|
+| `GET /api/health/live` | 200 |
+| `GET /api/health/ready` | 200 `ready`, `checks`: `database: ok`, `aurora: ok`, `dynamodb: ok`. 첫 요청(새 Lambda 실행 환경) 약 7.3초, 이후 약 0.8~1.0초 |
+| `GET /api/me` (토큰 없음) | 401 |
+
+- 생성 뒤 조회(2026-11-05): 테이블 `ACTIVE`·`PAY_PER_REQUEST`·삭제 보호 켜짐·항목 0개(`Scan` COUNT), 버킷 버전 관리 `Enabled`·객체와 버전 0개(`ListObjectVersions`). API 역할은 테이블에 `dynamodb:DescribeTable`만 있고 버킷 권한은 없다.
+- 두 자원 모두 `Retain`이라 스택을 지워도 남는다(테이블은 삭제 보호도 먼저 꺼야 한다). 정리는 사용자가 판단해 별도로 한다.
+- 템플릿 검사: `cfn-lint 1.59.0`으로 `storage.yaml`·`api.yaml` 통과. cfn-guard는 이번에 실행하지 않았다.
+- AWS 가격 도구 MCP는 `aws login` 자격 증명에 필요한 `botocore[crt]`가 없어 실패했고, 단가는 `aws pricing get-products`(us-east-1 엔드포인트)로 조회했다([설계 3절](aws-stage3-design.md#3-비용-ap-southeast-2)).
+
 ## 다음 단계
 
-- DynamoDB·S3 원음 단계: 기반은 [aws-stage3-design.md](aws-stage3-design.md)(#52). 이것이 배포돼야 `/api/health/ready`가 200이 된다.
+- 업로드·작업·결과 API(항목 키 설계, S3 CORS·presigned URL, API의 항목·버킷 권한): MVP 범위(D8) 결정 뒤
 - CloudFront `/api/*`를 이 API로 보낼지(경로 분리 포함) umsal-pwa와 조율

@@ -49,9 +49,9 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 | 항목 | 상태 |
 |---|---|
 | `GET /health` | 구현. 배포 확인용. 프로세스 생존만 응답하며 Aurora·DynamoDB·S3 등 의존성 상태는 보증하지 않는다 |
-| `GET /api/health/live`·`GET /api/health/ready` | 구현(D2, #17). PWA와 같은 응답 모양. ready는 `checks.aurora`·`checks.dynamodb`를 따로 표시하고 둘 다 `ok`일 때만 `ready`(PWA 호환 `checks.database`도 그때만 `ok`). PostgreSQL 확인(`checks.aurora`, 2단계 배포에서 `ok` 확인)과 DynamoDB 확인(`DescribeTable`로 `ACTIVE`, #52)이 있다. AWS에는 DynamoDB 테이블이 아직 없어 배포 환경의 ready는 503 `not_ready`다 |
+| `GET /api/health/live`·`GET /api/health/ready` | 구현(D2, #17). PWA와 같은 응답 모양. ready는 `checks.aurora`·`checks.dynamodb`를 따로 표시하고 둘 다 `ok`일 때만 `ready`(PWA 호환 `checks.database`도 그때만 `ok`). PostgreSQL 확인(`checks.aurora`, 2단계 배포에서 `ok` 확인)과 DynamoDB 확인(`DescribeTable`로 `ACTIVE`, #52)이 있다. 2026-11-05 3단계 배포 뒤 배포 환경의 ready는 200 `ready`(세 `checks` 모두 `ok`)다(#54) |
 | Lambda 핸들러 | 구현. 합성 API Gateway HTTP API v2 이벤트로만 테스트했다 |
-| AWS 배포(IaC) | 1단계(#19, API Gateway HTTP API + Lambda)와 2단계(VPC·RDS PostgreSQL·Cognito, 2026-11-05 배포, 기록 #49)를 CloudFormation으로 배포했다([배포 문서](docs/aws-deployment.md)). 3단계 저장소 기반(DynamoDB 테이블·원음 S3 버킷, `storage.yaml`, #52)은 템플릿만 있고 미생성([설계](docs/aws-stage3-design.md)). CloudFront 연결은 미구현 |
+| AWS 배포(IaC) | 1단계(#19, API Gateway HTTP API + Lambda)와 2단계(VPC·RDS PostgreSQL·Cognito, 2026-11-05 배포, 기록 #49)를 CloudFormation으로 배포했다([배포 문서](docs/aws-deployment.md)). 3단계 저장소 기반(DynamoDB 테이블·원음 S3 버킷, `storage.yaml`, #52)도 2026-11-05 생성했다([설계](docs/aws-stage3-design.md), 기록 #54). CloudFront 연결은 미구현 |
 | 2단계 AWS | 배포·확인 완료(2026-11-05). IAM 토큰 DB 접속(verify-full TLS, 토큰 10분 재사용), 배포 때 고정한 Cognito JWKS, 마이그레이션 Lambda(`0004`까지 적용), 매일 정리 작업 스케줄, `network.yaml`·`database.yaml`(RDS PostgreSQL, #44)·`auth.yaml`·`jobs.yaml`·일회용 `db-bootstrap.yaml`(사용 후 삭제) |
 | 사용자 인증 | Cognito access token 검증 의존성 구현(D3, #21). 배포 환경에서 합성 계정의 access token으로 `/api/me` 200, id token 401을 확인했다(#49) |
 | 사용자·관계 조회 | `GET /api/me`(인증된 첫 성공 요청에서 사용자 생성, 실패한 요청의 트랜잭션은 되돌림), `GET /api/connections`(cursor 페이지), `GET /api/connections/{id}`(비참여자 404) 구현(#29). `users`·`connections` 마이그레이션 `0002`. 실제 PostgreSQL 테스트를 거쳤고 2단계로 AWS에 배포했다. 표시 이름은 빈 문자열(D10) |
@@ -59,8 +59,8 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 | 동의 | `GET/PUT /api/connections/{id}/consents` 구현(#34). 방향별 grant(분석·공유 scope·확인 preview), 관계 생성 시 전부 거부로 시작, 본인 행만 `expected_version`으로 수정, 서버가 양쪽 허용 여부 계산(ACTIVE일 때만). 마이그레이션 `0004`. 실제 PostgreSQL 테스트를 거쳤고 2단계로 AWS에 배포했다. 분석 동의 철회 시 처리 취소는 녹음·작업이 없어 미연결 |
 | 연결 해제 | `DELETE /api/connections/{id}` 구현(#36). 관계 행 잠금 → DISCONNECTED·version+1 → 양방향 grant 전부 거부·version+1, 이미 해제면 변화 없는 202, `Idempotency-Key` 필수. 보관 자료 삭제는 하지 않는다(별도 삭제 요청). 실제 PostgreSQL 테스트를 거쳤고 2단계로 AWS에 배포했다 |
 | 분석 | 미구현 |
-| PostgreSQL 연결·마이그레이션 | 기반 구현(#23). 로컬 Docker PostgreSQL 17, `DATABASE_URL` 연결(연결 3초·쿼리 3초 제한), ready의 `checks.aurora` 실제 확인, Alembic(`0001` 기준, `0002` users·connections, `0003` invitations·idempotency_keys, `0004` consent_grants). 나머지 업무 테이블과 AWS Aurora는 미구현 |
-| DynamoDB·S3 저장 | 기반만 구현(#52): `storage.yaml`(범용 `pk`/`sk` 테이블, 버전 관리 원음 버킷)과 ready의 DynamoDB 확인. AWS 미생성. 항목 키 설계와 항목·파일 읽기·쓰기는 D8 뒤 |
+| PostgreSQL 연결·마이그레이션 | 기반 구현(#23). 로컬 Docker PostgreSQL 17, `DATABASE_URL` 연결(연결 3초·쿼리 3초 제한), ready의 `checks.aurora` 실제 확인, Alembic(`0001` 기준, `0002` users·connections, `0003` invitations·idempotency_keys, `0004` consent_grants). AWS에서는 RDS PostgreSQL(IAM 인증)에 `0004`까지 적용했다(2단계, #49). 나머지 업무 테이블은 미구현 |
+| DynamoDB·S3 저장 | 기반만 구현(#52): `storage.yaml`(범용 `pk`/`sk` 테이블, 버전 관리 원음 버킷)과 ready의 DynamoDB 확인. AWS에 생성(2026-11-05, 생성 뒤 조회에서 항목·객체 0개). API 권한은 테이블 `DescribeTable`뿐이고 버킷 권한은 없다. 항목 키 설계와 항목·파일 읽기·쓰기는 D8 뒤 |
 | API 계약 | 원본을 `contracts/openapi.yaml`(v0.3.0)로 이관(#25). 정적 검사, 구현 operation과 계약의 자동 비교(`tests/test_contract_parity.py`, #36), 응답 스키마 검사를 테스트로 실행한다. 업무 operation 28개 중 8개 구현 |
 | PWA 연동 | health 경로만 PWA 계약에 맞춤. 업무 API와 실제 연결 확인은 미구현 |
 
