@@ -13,7 +13,10 @@ SQLAlchemy), ``alembic.ini`` and the tracked ``migrations/`` directory.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import re
 import shutil
+import ssl
 import subprocess
 import urllib.request
 import zipfile
@@ -65,9 +68,16 @@ def _download_ca_bundle(target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(RDS_CA_BUNDLE_URL, timeout=30) as response:  # noqa: S310
         body = response.read()
-    if b"BEGIN CERTIFICATE" not in body:
-        raise SystemExit("Downloaded RDS CA bundle does not look like PEM certificates.")
+    # Every certificate must parse; print the digest so each build records what it trusted.
+    text = body.decode("ascii")
+    blocks = re.findall(r"-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----", text, re.S)
+    if not blocks:
+        raise SystemExit("Downloaded RDS CA bundle contains no PEM certificates.")
+    for block in blocks:
+        ssl.PEM_cert_to_DER_cert(block)  # raises on malformed data
     target.write_bytes(body)
+    digest = hashlib.sha256(body).hexdigest()
+    print(f"RDS CA bundle: {len(blocks)} certificates, sha256 {digest}")
 
 
 def main(argv: list[str] | None = None) -> None:

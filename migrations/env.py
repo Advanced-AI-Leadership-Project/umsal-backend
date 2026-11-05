@@ -53,8 +53,12 @@ def _engine():
 
     def creator():
         connection = target.connect()
-        connection.execute(f"SET statement_timeout = {MIGRATION_STATEMENT_TIMEOUT_MS}")
-        connection.commit()
+        try:
+            connection.execute(f"SET statement_timeout = {MIGRATION_STATEMENT_TIMEOUT_MS}")
+            connection.commit()
+        except Exception:
+            connection.close()
+            raise
         return connection
 
     return create_engine("postgresql+psycopg://", creator=creator, poolclass=pool.NullPool)

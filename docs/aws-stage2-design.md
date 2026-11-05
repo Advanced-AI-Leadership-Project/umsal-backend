@@ -103,7 +103,7 @@ flowchart LR
 1. `umsal-backend-auth`(Cognito) 생성 → 사용자 풀 ID·클라이언트 ID를 PWA와 공유, 콜백 경로 합의
 2. `umsal-backend-network`(VPC) 생성
 3. `umsal-backend-database`(Aurora) 생성 — 네트워크 출력값(서브넷·DB 보안 그룹)을 파라미터로 전달. 생성 전 change set으로 확인
-4. `EnableDataApi=true`로 스택을 갱신 → 운영자 PC에서 `aws rds-data execute-statement`로 앱·마이그레이션 사용자 생성(`CREATE USER …; GRANT rds_iam TO …`, 앱 사용자는 DDL 없음) → **`EnableDataApi=false`로 되돌림(체크리스트, 생략 금지)**. Data API가 자동 정지된 클러스터에서 동작하지 않으면 이 단계 동안 최소 용량을 잠시 0.5로 올렸다가 0으로 되돌린다(생성 때 실측)
+4. `EnableDataApi=true`로 스택을 갱신 → 운영자 PC에서 `aws rds-data execute-statement`로 [bootstrap_users.sql](../infra/aws/bootstrap_users.sql)을 실행해 앱·마이그레이션 사용자 생성(`rds_iam`, 앱 사용자는 DDL 없음, `ALTER DEFAULT PRIVILEGES`로 마이그레이션 사용자가 만드는 테이블에 앱의 행 권한 부여) → **`EnableDataApi=false`로 되돌림(체크리스트, 생략 금지)**. Data API가 자동 정지된 클러스터에서 동작하지 않으면 이 단계 동안 최소 용량을 잠시 0.5로 올렸다가 0으로 되돌린다(생성 때 실측)
 5. 구현 PR의 코드로 마이그레이션 Lambda 배포·실행(`upgrade head`)
 6. API Lambda를 VPC·환경 변수·권한과 함께 재배포 → `/api/health/ready`의 `aurora: ok`, 합성 계정으로 `/api/me` 확인
 7. 정리 작업 Lambda와 스케줄 연결

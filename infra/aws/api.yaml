@@ -5,6 +5,12 @@ Description: >-
   optional parameters below put the Lambda in the private VPC with Aurora IAM auth and
   Cognito verification using a JWKS document fixed at deploy time.
 Metadata:
+  # W1030 only: cfn-lint resolves the empty stage-1 default of LambdaSecurityGroupId
+  # against the sg- pattern. The value is used only under UseVpc, where the Rules require
+  # a real id and the parameter's AllowedPattern enforces the sg- format.
+  cfn-lint:
+    config:
+      ignore_checks: [W1030]
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
   com.aws.cloudformation.Context:
@@ -28,12 +34,15 @@ Parameters:
     AllowedValues: [dev]
     Description: Value reported by /api/health/* as environment
   SubnetIds:
-    Type: CommaDelimitedList
+    Type: String
     Default: ''
-    Description: Stage 2. PrivateSubnetIds output of umsal-backend-network (empty = no VPC)
+    Description: >-
+      Stage 2. PrivateSubnetIds output of umsal-backend-network, comma-separated
+      (empty = no VPC). A String, not a list, so Rules can compare it with Equals.
   LambdaSecurityGroupId:
     Type: String
     Default: ''
+    AllowedPattern: '^(sg-[0-9a-f]{8,17})?$'
     Description: Stage 2. LambdaSecurityGroupId output of umsal-backend-network
   DbHost:
     Type: String
@@ -63,14 +72,20 @@ Parameters:
       Stage 2. The whole JWKS document of the user pool, fetched at deploy time by
       infra/aws/stage2_params.py. Public keys only. Redeploy after a key rotation.
 Conditions:
-  UseVpc: !Not [!Equals [!Join ['', !Ref SubnetIds], '']]
+  UseVpc: !Not [!Equals [!Ref SubnetIds, '']]
   UseDatabase: !Not [!Equals [!Ref DbHost, '']]
   UseCognito: !Not [!Equals [!Ref CognitoUserPoolId, '']]
 Rules:
+  # Rules accept only rule functions (Equals, Not, And, Or, Contains, ...), not Join.
+  VpcNeedsSecurityGroup:
+    RuleCondition: !Not [!Equals [!Ref SubnetIds, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref LambdaSecurityGroupId, '']]
+        AssertDescription: SubnetIds requires LambdaSecurityGroupId
   DatabaseNeedsVpc:
     RuleCondition: !Not [!Equals [!Ref DbHost, '']]
     Assertions:
-      - Assert: !Not [!Equals [!Join ['', !Ref SubnetIds], '']]
+      - Assert: !Not [!Equals [!Ref SubnetIds, '']]
         AssertDescription: Aurora is private; DbHost requires SubnetIds
       - Assert: !Not [!Equals [!Ref DbClusterResourceId, '']]
         AssertDescription: DbHost requires DbClusterResourceId for rds-db:connect
@@ -124,6 +139,7 @@ Resources:
                   Action:
                     - ec2:CreateNetworkInterface
                     - ec2:DescribeNetworkInterfaces
+                    - ec2:DescribeSubnets
                     - ec2:DeleteNetworkInterface
                     - ec2:AssignPrivateIpAddresses
                     - ec2:UnassignPrivateIpAddresses
@@ -161,7 +177,7 @@ Resources:
         LogGroup: !Ref FunctionLog
       VpcConfig: !If
         - UseVpc
-        - SubnetIds: !Ref SubnetIds
+        - SubnetIds: !Split [',', !Ref SubnetIds]
           SecurityGroupIds: [!Ref LambdaSecurityGroupId]
         - !Ref AWS::NoValue
       Environment:
@@ -190,7 +206,7 @@ Resources:
       IntegrationType: AWS_PROXY
       IntegrationUri: !GetAtt ApiFunction.Arn
       PayloadFormatVersion: '2.0'
-      TimeoutInMillis: 15000
+      TimeoutInMillis: 29000  # above the 15s Lambda timeout, so the Lambda answers first
   ApiRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:

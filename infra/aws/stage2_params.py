@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -43,17 +44,29 @@ def stack_outputs(name: str) -> dict[str, str]:
         capture_output=True,
         text=True,
     ).stdout
-    return {item["OutputKey"]: item["OutputValue"] for item in json.loads(raw)}
+    outputs = json.loads(raw)
+    if not outputs:
+        raise SystemExit(f"Stack {name} has no outputs; create it first.")
+    return {item["OutputKey"]: item["OutputValue"] for item in outputs}
+
+
+ISSUER = re.compile(
+    r"^https://cognito-idp\.ap-southeast-2\.amazonaws\.com/ap-southeast-2_[A-Za-z0-9]+$"
+)
+CFN_PARAMETER_LIMIT = 4096
 
 
 def fetch_jwks(issuer: str) -> str:
-    if not issuer.startswith("https://cognito-idp."):
+    if not ISSUER.fullmatch(issuer):
         raise SystemExit("Unexpected issuer; refusing to fetch keys from it.")
     with urllib.request.urlopen(f"{issuer}/.well-known/jwks.json", timeout=10) as response:  # noqa: S310
         document = json.loads(response.read())
     if not document.get("keys"):
         raise SystemExit("The JWKS document has no keys.")
-    return json.dumps(document, separators=(",", ":"))  # whole document, compact
+    compact = json.dumps(document, separators=(",", ":"))  # whole document, compact
+    if len(compact) > CFN_PARAMETER_LIMIT:
+        raise SystemExit("The JWKS document exceeds the CloudFormation parameter limit.")
+    return compact
 
 
 def main(argv: list[str] | None = None) -> None:
