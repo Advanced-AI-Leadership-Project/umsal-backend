@@ -179,9 +179,11 @@ Resources:
             Principal: {Service: scheduler.amazonaws.com}
             Action: sts:AssumeRole
             Condition:
-              StringEquals: {'aws:SourceAccount': !Ref AWS::AccountId}
-              ArnLike:
-                'aws:SourceArn': !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/*'
+              # Scheduler passes the schedule GROUP ARN as aws:SourceArn, not the schedule
+              # ARN (docs: Scheduler confused deputy prevention). DailyPurge uses "default".
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+                'aws:SourceArn': !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule-group/default'
       Policies:
         - PolicyName: InvokeMaintenanceOnly
           PolicyDocument:
