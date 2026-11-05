@@ -16,7 +16,8 @@ Parameters:
   VpcCidr:
     Type: String
     Default: 10.20.0.0/16
-    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$'
+    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/(1[6-9]|2[0-2])$'
+    Description: /16 to /22 so that four /24-sized subnets (!Cidr ..., 4, 8) fit
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -94,6 +95,8 @@ Resources:
       GroupDescription: UMSAL backend Lambdas (no inbound)
       VpcId: !Ref Vpc
       SecurityGroupEgress:
+        # Safe only because the route table has no 0.0.0.0/0 route. If a NAT is ever added,
+        # narrow this to the S3/DynamoDB managed prefix lists first.
         - Description: HTTPS to S3 and DynamoDB through gateway endpoints (no internet route)
           IpProtocol: tcp
           FromPort: 443

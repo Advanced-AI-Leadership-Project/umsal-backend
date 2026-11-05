@@ -34,7 +34,25 @@ Parameters:
     Default: 300
     MinValue: 300
     MaxValue: 86400
+  EnableDataApi:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      Turn on only for the one-time user bootstrap (rds-data execute-statement with the
+      master secret from the operator's machine), then turn off again.
+Conditions:
+  DataApiOn: !Equals [!Ref EnableDataApi, 'true']
 Resources:
+  ClusterParameters:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      Description: UMSAL Aurora PostgreSQL 17 cluster parameters
+      Family: aurora-postgresql17
+      Parameters:
+        rds.force_ssl: '1'  # explicit, not relying on the engine default
+      Tags:
+        - {Key: Project, Value: umsal-backend}
   SubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
@@ -62,6 +80,8 @@ Resources:
       ManageMasterUserPassword: true
       EnableIAMDatabaseAuthentication: true
       StorageEncrypted: true
+      DBClusterParameterGroupName: !Ref ClusterParameters
+      EnableHttpEndpoint: !If [DataApiOn, true, false]
       DBSubnetGroupName: !Ref SubnetGroup
       VpcSecurityGroupIds: [!Ref DatabaseSecurityGroupId]
       ServerlessV2ScalingConfiguration:
