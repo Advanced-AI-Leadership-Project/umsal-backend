@@ -10,7 +10,7 @@
 ```bash
 make setup                          # 잠금 의존성 설치 + 이 clone의 Git hook 연결
 python3 tools/ai_workflow.py doctor # 원격·도구 버전·GitHub 인증 확인
-make api                            # http://127.0.0.1:8000/health
+make api                            # http://127.0.0.1:8000/health, /api/health/live, /api/health/ready
 ```
 
 ## 검사
