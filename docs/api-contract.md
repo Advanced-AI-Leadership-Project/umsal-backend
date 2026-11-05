@@ -2,13 +2,14 @@
 
 2026-11-04 · 이슈 #9 · 대응: umsal-pwa #20 (DEV-04)
 
-**초안이다.** 아래 업무 API는 모두 미구현이며 "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 이 문서는 계약 차이와 결정 항목을 정리할 뿐 OpenAPI 파일을 바꾸지 않는다.
+**초안이다.** 아래 업무 API는 모두 미구현이며 "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 계약 원본은 2026-11-05부터 이 저장소 [`contracts/`](../contracts/openapi.yaml)(v0.3.0, #25)이고, 확정 결정 중 D2·D3·D7을 반영했다. 이 문서는 원안과의 차이와 결정 기록이다.
 
 ## 1. 기준 원본
 
 | 항목 | 값 |
 |---|---|
-| 목표 계약 | umsal-pwa [`contracts/openapi.yaml`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/contracts/openapi.yaml) v0.2.0, 23 paths / 28 operations |
+| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.3.0, 26 paths / 31 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7) 추가. 정적 검사는 `tests/test_contracts.py` |
+| 이관 전 원안 | umsal-pwa [`contracts/openapi.yaml`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/contracts/openapi.yaml) v0.2.0, 23 paths / 28 operations |
 | 설계 설명 | umsal-pwa [`docs/design/09_API_계약_및_데이터설계.md`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/docs/design/09_API_%EA%B3%84%EC%95%BD_%EB%B0%8F_%EB%8D%B0%EC%9D%B4%ED%84%B0%EC%84%A4%EA%B3%84.md) (2026-10-27 Android 원안) |
 | 고정 commit | `e54088b9489d67ab3269cb626c860d3b0a4bf79e` (umsal-pwa main, 2026-11-04 조회) |
 | 저장 계층 | 이 저장소 [SPEC](../SPEC.md)의 "저장 계층" (#7) |
@@ -104,5 +105,5 @@ umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변�
 ## 7. 다음 단계
 
 1. D1·D2·D3·D5·D6·D7·D9는 확정했다(D2·D3 검증은 구현, D5·D6은 SPEC "저장 계층", D9는 AGENTS 제품 불변조건에 반영). D4는 umsal-pwa #52, D8은 #17 결정 뒤 정한다.
-2. D2·D7을 반영한 계약을 이 저장소 `contracts/openapi.yaml`로 옮긴다(별도 이슈).
+2. 계약을 이 저장소 `contracts/`로 옮기고 D2·D3·D7을 반영했다(#25). umsal-pwa 쪽 사본 정리(삭제·참조 전환·프런트 타입 생성)는 PWA 팀이 정한다.
 3. umsal-pwa #17의 발표 범위로 1차 operation(D8)을 정한 뒤 DB 스키마(umsal-pwa #23)와 인증(#24)을 시작한다.

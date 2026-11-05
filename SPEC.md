@@ -53,6 +53,7 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 | 동의·분석 | 미구현 |
 | PostgreSQL 연결·마이그레이션 | 기반 구현(#23). 로컬 Docker PostgreSQL 17, `DATABASE_URL` 연결(연결 3초·쿼리 3초 제한), ready의 `checks.aurora` 실제 확인, Alembic 빈 기준 revision. 업무 테이블과 AWS Aurora는 미구현 |
 | DynamoDB·S3 저장 | 미구현 |
+| API 계약 | 원본을 `contracts/openapi.yaml`(v0.3.0)로 이관(#25). 정적 검사와 구현된 health 응답의 스키마 검사를 테스트로 실행한다. 업무 operation 28개는 계약만 있고 미구현 |
 | PWA 연동 | health 경로만 PWA 계약에 맞춤. 업무 API와 실제 연결 확인은 미구현 |
 
 목표 설계를 구현 완료로 보고하지 않는다. 기능이 추가되면 위 표를 실제 상태로 갱신한다.

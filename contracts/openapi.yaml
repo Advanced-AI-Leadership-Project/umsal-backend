@@ -1,13 +1,55 @@
 openapi: 3.1.0
 info:
   title: 엄살 MVP API 계약
-  version: 0.2.0
-  description: 설계 스키마. 실제 API/Lambda/DB/IAM/authorizer를 배포하거나 실행하지 않았다. 서버 URL 생략. 사용자CognitoBearer와기계AWS_IAM/SigV4
+  version: 0.3.0
+  description: 설계 스키마. 원본은 umsal-backend contracts/(umsal-pwa e54088b의 v0.2.0에서 이관). 구현 상태는 umsal-backend
+    SPEC "현재 구현 상태"를 따르며 이 문서의 operation이 실행 중임을 뜻하지 않는다. 모든 경로는 /api 아래(D2). 사용자CognitoBearer와기계AWS_IAM/SigV4
     분리. 모든긴처리는비동기.
+servers:
+- url: /api
+  description: 같은 출처의 /api 접두사(D2). 직접 API Gateway 주소에서도 같은 경로를 쓴다.
 tags:
 - name: App
 - name: Worker
+- name: Ops
 paths:
+  /health/live:
+    get:
+      operationId: getHealthLive
+      summary: 프로세스 생존 확인(D2)
+      description: 인증 없음. 의존성 상태를 보증하지 않는다.
+      security: []
+      tags:
+      - Ops
+      responses:
+        '200':
+          description: 프로세스 응답
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveResponse'
+  /health/ready:
+    get:
+      operationId: getHealthReady
+      summary: 요청 처리 준비 확인(D2)
+      description: 인증 없음. aurora·dynamodb를 각각 실제로 확인하고 모두 ok일 때만 ready. 확인하지 않은(not_configured) 의존성은
+        준비되지 않은 것으로 본다. database는 PWA 호환 종합값.
+      security: []
+      tags:
+      - Ops
+      responses:
+        '200':
+          description: 모든 의존성 확인됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+        '503':
+          description: 하나 이상의 의존성이 unavailable 또는 not_configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
   /me:
     get:
       operationId: getMe
@@ -212,6 +254,76 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AcceptInvitation'
+  /connections:
+    get:
+      operationId: listConnections
+      summary: 내 관계 목록(D7)
+      description: 호출자가 참여한 관계만 반환한다. 가족 화면용. 다른 사용자의 관계는 존재도 드러내지 않는다.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionPage'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
   /connections/{id}:
     get:
       operationId: getConnection
@@ -1913,7 +2025,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Cognito access token. 실제HTTPAPI JWT authorizer의issuer/audience설정별도. token_use와client/scope검증.
+      description: Cognito access token(D3). 백엔드가 앱에서 직접 검증한다. RS256 서명(사용자 풀 JWKS, kid), iss, exp·iat, token_use=access(ID
+        token 거부), 허용 client_id. 실패는 401 UNAUTHENTICATED, 인증 설정 없음·JWKS 장애는 503 TEMPORARILY_UNAVAILABLE. API Gateway
+        JWT authorizer는 추가 방어선으로만 검토한다.
     AwsSigV4:
       type: apiKey
       in: header
@@ -1990,6 +2104,75 @@ components:
       - participants
       - status
       - version
+    ConnectionPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Connection'
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+      - next_cursor
+    LiveResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          const: ok
+        service:
+          const: api
+        environment:
+          type: string
+      required:
+      - status
+      - service
+      - environment
+    ReadinessChecks:
+      type: object
+      additionalProperties: false
+      properties:
+        database:
+          type: string
+          enum:
+          - ok
+          - unavailable
+        aurora: &readiness_status
+          type: string
+          enum:
+          - ok
+          - unavailable
+          - not_configured
+        dynamodb: *readiness_status
+      required:
+      - database
+      - aurora
+      - dynamodb
+    ReadyResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum:
+          - ready
+          - not_ready
+        service:
+          const: api
+        environment:
+          type: string
+        checks:
+          $ref: '#/components/schemas/ReadinessChecks'
+      required:
+      - status
+      - service
+      - environment
+      - checks
     ConsentUpdate:
       type: object
       additionalProperties: false
