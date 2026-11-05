@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -72,7 +73,12 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
         parsed = datetime.fromisoformat(created_at)
     except (ValueError, TypeError, binascii.Error, UnicodeDecodeError) as exc:
         raise _invalid_cursor() from exc
-    if parsed.tzinfo is None or not isinstance(connection_id, str):
+    # A tampered id (NUL, lone surrogate, other shapes) must be a 422, not a driver error.
+    if (
+        parsed.tzinfo is None
+        or not isinstance(connection_id, str)
+        or not re.fullmatch(ID_PATTERN, connection_id)
+    ):
         raise _invalid_cursor()
     return parsed, connection_id
 
@@ -82,9 +88,9 @@ router = APIRouter(prefix="/api", tags=["App"])
 
 @router.get("/connections", response_model=ConnectionPage, operation_id="listConnections")
 def list_connections(
-    db: Db,
     user: CurrentUser,
-    cursor: Annotated[str | None, Query(max_length=512)] = None,
+    db: Db,
+    cursor: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> ConnectionPage:
     after = decode_cursor(cursor) if cursor else None
@@ -102,8 +108,8 @@ def list_connections(
 
 @router.get("/connections/{connection_id}", response_model=Connection, operation_id="getConnection")
 def get_connection(
-    db: Db,
     user: CurrentUser,
+    db: Db,
     connection_id: Annotated[str, Path(pattern=ID_PATTERN)],
 ) -> Connection:
     row = db.execute(

@@ -59,6 +59,8 @@ def get_db(request: Request) -> Iterator[psycopg.Connection]:
     """FastAPI dependency: one connection and transaction per request.
 
     The transaction commits when the handler returns and rolls back when it raises.
+    ``scope="function"`` (see ``Db``) runs that commit before the response is sent,
+    so a failed commit answers 503 instead of an already-sent 200.
     Connection failures surface as psycopg.OperationalError (503 handler).
     """
     url: str | None = getattr(request.app.state, "database_url", None)
@@ -68,4 +70,4 @@ def get_db(request: Request) -> Iterator[psycopg.Connection]:
         yield connection
 
 
-Db = Annotated[psycopg.Connection, Depends(get_db)]
+Db = Annotated[psycopg.Connection, Depends(get_db, scope="function")]

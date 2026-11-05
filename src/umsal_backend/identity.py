@@ -22,8 +22,12 @@ class Actor(BaseModel):
     display_name: str = Field(max_length=80)
 
 
-def get_or_create_user(db: Db, principal: CurrentPrincipal) -> Actor:
-    """FastAPI dependency: the internal user for the verified caller."""
+def get_or_create_user(principal: CurrentPrincipal, db: Db) -> Actor:
+    """FastAPI dependency: the internal user for the verified caller.
+
+    ``principal`` is declared first so authentication fails before a database
+    connection is opened (no Aurora wake-up or 503 for unauthenticated requests).
+    """
     with db.cursor() as cursor:
         cursor.execute(
             "INSERT INTO users (cognito_sub) VALUES (%s) ON CONFLICT (cognito_sub) DO NOTHING",

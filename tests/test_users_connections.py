@@ -6,6 +6,8 @@ token verification itself is covered by test_auth.py.
 
 from __future__ import annotations
 
+import base64
+import json
 from datetime import UTC, datetime
 
 import psycopg
@@ -14,7 +16,13 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 
 from umsal_backend.app import create_app
-from umsal_backend.auth import Principal, require_principal
+from umsal_backend.auth import (
+    CognitoSettings,
+    KeyNotFound,
+    Principal,
+    TokenVerifier,
+    require_principal,
+)
 from umsal_backend.connections import decode_cursor, encode_cursor
 from umsal_backend.errors import ApiError
 
@@ -96,8 +104,35 @@ def test_unreachable_database_is_retryable_503_without_leaking_url():
     assert "synthetic-secret" not in response.text
 
 
+def _no_keys(_kid):
+    raise KeyNotFound
+
+
+@pytest.mark.parametrize("header", [None, "Bearer not-a-jwt"], ids=["no-token", "bad-token"])
+def test_authentication_fails_before_opening_a_connection(header):
+    # The database is unreachable: a 401 (not 503) proves auth ran before get_db.
+    settings = CognitoSettings("ap-southeast-2", "ap-southeast-2_SYNTH", frozenset({"c"}))
+    app = create_app(
+        token_verifier=TokenVerifier(settings, _no_keys),
+        database="postgresql://synthetic:synthetic@127.0.0.1:1/umsal",
+    )
+    headers = {"Authorization": header} if header else {}
+    client = TestClient(app)
+    for path in ("/api/me", "/api/connections", "/api/connections/con_x1"):
+        _assert_error(client.get(path, headers=headers), 401, "UNAUTHENTICATED")
+
+
+def test_failed_commit_is_503_not_a_sent_200(client, monkeypatch):
+    def fail_commit(_self):
+        raise psycopg.OperationalError("synthetic commit failure")
+
+    monkeypatch.setattr(psycopg.Connection, "commit", fail_commit)
+    response = client.get("/api/me", headers=_as("sub-commit"))
+    _assert_error(response, 503, "TEMPORARILY_UNAVAILABLE")
+
+
 def test_user_apis_require_authentication(migrated_db):
-    # Real auth dependency without Cognito settings fails closed before any query.
+    # Real auth dependency without Cognito settings fails closed (503).
     client = TestClient(create_app(token_verifier=None, database=migrated_db))
     _assert_error(client.get("/api/me"), 503, "TEMPORARILY_UNAVAILABLE")
     _assert_error(client.get("/api/connections"), 503, "TEMPORARILY_UNAVAILABLE")
@@ -166,6 +201,27 @@ def test_invalid_query_is_422_in_contract_shape(client, params):
     response = client.get("/api/connections", headers=_as("me"), params=params)
     _assert_error(response, 422, "VALIDATION_FAILED")
     assert "not-a-cursor" not in response.text
+
+
+@pytest.mark.parametrize(
+    "connection_id",
+    ["bad" + chr(0) + "id", chr(0xD800) + "surrogate", "x", "has space", 7],
+    ids=["nul", "lone-surrogate", "too-short", "space", "not-a-string"],
+)
+def test_tampered_cursor_id_is_422(client, connection_id):
+    raw = json.dumps(["2026-11-05T00:00:00+00:00", connection_id])  # ASCII-escaped
+    cursor = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+    response = client.get("/api/connections", headers=_as("me"), params={"cursor": cursor})
+    _assert_error(response, 422, "VALIDATION_FAILED")
+
+
+def test_cursor_naming_another_users_connection_leaks_nothing(client, migrated_db):
+    alice, bob = _user_id(client, "a"), _user_id(client, "b")
+    _user_id(client, "intruder")
+    theirs = _connect(migrated_db, alice, bob)
+    future = encode_cursor(datetime(2999, 1, 1, tzinfo=UTC), theirs)
+    page = client.get("/api/connections", headers=_as("intruder"), params={"cursor": future})
+    assert page.json() == {"items": [], "next_cursor": None}
 
 
 def test_cursor_round_trip_and_rejects_naive_time():

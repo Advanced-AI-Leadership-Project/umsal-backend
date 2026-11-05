@@ -46,6 +46,13 @@ def migrated_db(test_database_url, monkeypatch):
     from alembic import command
     from alembic.config import Config
 
+    # This fixture migrates and TRUNCATEs. Refuse anything that is not clearly a
+    # local or test database so a mistyped URL cannot wipe real data.
+    info = psycopg.conninfo.conninfo_to_dict(test_database_url)
+    local = info.get("host", "localhost") in {"localhost", "127.0.0.1", "::1"}
+    if not (local or "test" in info.get("dbname", "")):
+        pytest.fail("TEST_DATABASE_URL must point at a local or *test* database")
+
     with monkeypatch.context() as patched:
         patched.setenv("DATABASE_URL", test_database_url)  # read by migrations/env.py
         command.upgrade(Config(str(ROOT / "alembic.ini")), "head")
