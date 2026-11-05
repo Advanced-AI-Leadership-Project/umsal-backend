@@ -31,7 +31,8 @@
 
 - DynamoDB 온디맨드: 요청 수와 저장 용량에 비례한다. PITR은 테이블 크기에 비례해 과금된다. 지금은 ready 확인의 `DescribeTable`(제어 평면 호출, 요청 단위 과금 대상 아님)뿐이고 항목이 없어 사실상 0이다.
 - S3: 저장 용량·요청 수 비례. 원음을 올리기 전에는 0이다.
-단가(2026-11-05, AWS Pricing API 조회, ap-southeast-2, USD):
+
+단가(2026-11-05, `aws pricing get-products`로 AWS Pricing API 조회, ap-southeast-2, USD):
 
 | 항목 | 단가 |
 |---|---|
