@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  DRAFT (not deployed, #38). UMSAL backend Aurora PostgreSQL serverless cluster with express
+  configuration (stack umsal-backend-database): no customer VPC, IAM-only database
+  authentication through the AWS-managed internet access gateway, scale to zero when idle.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/aws-stage2-design.md, ../../SPEC.md]
+    must:
+      - Regional resources in the selected Region (ap-southeast-2) only
+      - Never publicly accessible with a password; express is IAM-auth only
+      - Synthetic data only until the retention and deletion policy (umsal-pwa 19) is settled
+Parameters:
+  ClusterIdentifier:
+    Type: String
+    Default: umsal-backend
+    AllowedPattern: '^[a-z][a-z0-9-]{0,61}[a-z0-9]$'
+  MaxCapacity:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 4
+    Description: Free plan allows up to 4 ACUs per cluster
+  SecondsUntilAutoPause:
+    Type: Number
+    Default: 300
+    MinValue: 300
+    MaxValue: 86400
+Resources:
+  Cluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Metadata:
+      # cfn-lint 1.59.0 ships a DBCluster schema without WithExpressConfiguration. The live
+      # registry schema in ap-southeast-2 has it (boolean, create-only; checked 2026-11-05
+      # with `aws cloudformation describe-type`). Only E3002 is ignored, only here.
+      cfn-lint:
+        config:
+          ignore_checks: [E3002]
+      com.aws.cloudformation.Context:
+        why: >-
+          Express keeps the Lambda outside a VPC, so no NAT, VPC endpoints or Secrets
+          Manager endpoint are needed; IAM auth tokens are signed locally by the caller.
+        must:
+          - MinCapacity 0 (auto-pause); 0.5+ ACU bills every hour (~USD 72/month at 0.5 ACU)
+          - Verify at first create that ServerlessV2ScalingConfiguration is accepted with express;
+            if rejected, remove it here and apply the same values with modify-db-cluster
+    Properties:
+      DBClusterIdentifier: !Ref ClusterIdentifier
+      Engine: aurora-postgresql
+      WithExpressConfiguration: true
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0
+        MaxCapacity: !Ref MaxCapacity
+        SecondsUntilAutoPause: !Ref SecondsUntilAutoPause
+      DeletionProtection: true
+      CopyTagsToSnapshot: true
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+        - {Key: created_by, Value: aurora-skill}
+        - {Key: generation_model, Value: claude-opus-5-5}
+Outputs:
+  ClusterEndpoint:
+    Description: Writer endpoint for IAM-authenticated connections on port 5432
+    Value: !GetAtt Cluster.Endpoint.Address
+  ClusterResourceId:
+    Description: Used in the rds-db:connect IAM policy resource ARN
+    Value: !GetAtt Cluster.DBClusterResourceId

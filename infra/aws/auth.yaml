@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  DRAFT (not deployed, #38). UMSAL Cognito user pool for the PWA (stack umsal-backend-auth):
+  managed login with authorization code + PKCE, a public app client without a secret, and
+  short-lived access tokens verified by the backend (api-contract D3).
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/aws-stage2-design.md, ../../docs/api-contract.md]
+    must:
+      - Regional resources in the selected Region (ap-southeast-2) only
+      - No client secret in a browser app; authorization code flow with PKCE only
+      - Token storage location in the PWA is decided in umsal-pwa 24 and 25
+Parameters:
+  DomainPrefix:
+    Type: String
+    Default: umsal-family
+    AllowedPattern: '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'
+    Description: Managed login domain prefix (<prefix>.auth.ap-southeast-2.amazoncognito.com)
+  CallbackUrl:
+    Type: String
+    Default: https://d86lxzcp0rvt4.cloudfront.net/auth/callback
+    AllowedPattern: '^https://.+$'
+  LogoutUrl:
+    Type: String
+    Default: https://d86lxzcp0rvt4.cloudfront.net/
+    AllowedPattern: '^https://.+$'
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Essentials tier is needed for managed login; 10,000 MAU per month are free.
+        must: [Email is the only sign-in identifier, No phone numbers collected]
+    Properties:
+      UserPoolName: !Sub '${AWS::StackName}-users'
+      UserPoolTier: ESSENTIALS
+      DeletionProtection: ACTIVE
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - {Name: verified_email, Priority: 1}
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: false
+      MfaConfiguration: 'OFF'
+      UserPoolTags: {Project: umsal-backend}
+  Domain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Ref DomainPrefix
+      ManagedLoginVersion: 2
+  WebClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: umsal-pwa
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs: [!Ref CallbackUrl]
+      LogoutURLs: [!Ref LogoutUrl]
+      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+  Branding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref WebClient
+      UseCognitoProvidedValues: true
+Outputs:
+  UserPoolId:
+    Description: COGNITO_USER_POOL_ID for the API Lambda
+    Value: !Ref UserPool
+  WebClientId:
+    Description: COGNITO_APP_CLIENT_IDS for the API Lambda and the PWA client id
+    Value: !Ref WebClient
+  Issuer:
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+  ManagedLoginDomain:
+    Value: !Sub '${DomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
