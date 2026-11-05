@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-
 import psycopg
 import pytest
 from fastapi import Request
@@ -150,18 +148,15 @@ def test_reconnecting_after_disconnect_starts_denied(client, connected):
 
 
 def test_disconnect_and_consent_update_race_never_leaves_an_active_grant(
-    client, connected, migrated_db
+    client, connected, migrated_db, run_concurrently
 ):
     """Lock order (connection, then grants) serializes disconnect and a concurrent PUT."""
     results: dict[str, int] = {}
-    barrier = threading.Barrier(2)
 
     def disconnect():
-        barrier.wait()
         results["delete"] = _delete(client, connected, "alice", "race-delete-1").status_code
 
     def update():
-        barrier.wait()
         results["put"] = client.put(
             f"/api/connections/{connected}/consents",
             headers=_h("bob", "race-put-1"),
@@ -173,11 +168,7 @@ def test_disconnect_and_consent_update_race_never_leaves_an_active_grant(
             },
         ).status_code
 
-    threads = [threading.Thread(target=disconnect), threading.Thread(target=update)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    run_concurrently(disconnect, update)
     assert results["delete"] == 202
     assert results["put"] in (200, 409)
     with psycopg.connect(migrated_db) as connection:

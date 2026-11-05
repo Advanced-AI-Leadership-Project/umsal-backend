@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-
 import psycopg
 import pytest
 from fastapi import Request
@@ -166,22 +164,22 @@ def test_update_replays_same_key_and_rejects_reuse(client, connected):
     _assert_error(other, 409, "IDEMPOTENCY_CONFLICT")
 
 
-def test_concurrent_updates_with_same_version_apply_once(client, connected):
+def test_concurrent_updates_with_same_version_apply_once(client, connected, run_concurrently):
     connection_id, _alice, _bob = connected
     statuses: list[int] = []
-    barrier = threading.Barrier(2)
 
     def update(key: str):
-        barrier.wait()
         statuses.append(
             _put(client, connection_id, "alice", key, analysis_allowed=True).status_code
         )
 
-    threads = [threading.Thread(target=update, args=(k,)) for k in ("race-key-1", "race-key-2")]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    def update_key_1():
+        update("race-key-1")
+
+    def update_key_2():
+        update("race-key-2")
+
+    run_concurrently(update_key_1, update_key_2)
     assert sorted(statuses) == [200, 409]
     assert _get(client, connection_id, "alice").json()["mine"]["version"] == 2
 
@@ -311,20 +309,19 @@ def test_pending_connection_computes_false_and_rejects_updates(client, migrated_
     _assert_error(_put(client, connection_id, "alice", "put-key-1"), 409, "INVALID_STATE")
 
 
-def test_concurrent_first_reads_of_legacy_connection_do_not_fail(client, migrated_db):
+def test_concurrent_first_reads_of_legacy_connection_do_not_fail(
+    client, migrated_db, run_concurrently
+):
     connection_id = _legacy_connection(client, migrated_db)
     statuses: list[int] = []
-    barrier = threading.Barrier(2)
 
-    def read(sub: str):
-        barrier.wait()
-        statuses.append(_get(client, connection_id, sub).status_code)
+    def read_as_alice():
+        statuses.append(_get(client, connection_id, "alice").status_code)
 
-    threads = [threading.Thread(target=read, args=(s,)) for s in ("alice", "bob")]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    def read_as_bob():
+        statuses.append(_get(client, connection_id, "bob").status_code)
+
+    run_concurrently(read_as_alice, read_as_bob)
     assert statuses == [200, 200]
     with psycopg.connect(migrated_db) as connection:
         count = connection.execute(

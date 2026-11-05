@@ -42,6 +42,8 @@ required-version = "==0.12.3"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Dump every thread's stack if one test runs this long, so a hang shows where (#48).
+faulthandler_timeout = 120
 addopts = "--import-mode=importlib -p pytester -ra --cov=umsal_backend --cov-branch --cov-report=term-missing --cov-report=xml:.reports/python-coverage.xml --cov-report=json:.reports/python-coverage.json --cov-fail-under=80"
 
 [tool.coverage.run]
