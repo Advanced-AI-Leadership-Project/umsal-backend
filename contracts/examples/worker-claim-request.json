@@ -1,0 +1,6 @@
+{
+  "demo": true,
+  "worker_id": "worker_demo_001",
+  "expected_stage": "AUDIO_PREP",
+  "pipeline_version": "demo-pipeline-0.2"
+}

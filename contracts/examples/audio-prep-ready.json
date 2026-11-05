@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.2",
+  "demo": true,
+  "recording_id": "rec_demo_001",
+  "job_id": "job_demo_audio_001",
+  "stage": "AUDIO_PREP",
+  "status": "READY_FOR_CONFIRMATION",
+  "duration_ms": 10000,
+  "audio_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "pipeline_version": "demo-pipeline-0.2",
+  "analysis_grant_versions": {
+    "usr_demo_a": 1,
+    "usr_demo_b": 1
+  },
+  "utterances": [
+    {
+      "utterance_id": "utt_demo_001",
+      "speaker_id": "spk_demo_a",
+      "start_ms": 1000,
+      "end_ms": 4000,
+      "text": "요즘 잠을 설치는 날이 있어.",
+      "quality_flags": []
+    }
+  ],
+  "reason_codes": []
+}

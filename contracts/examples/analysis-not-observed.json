@@ -1,0 +1,25 @@
+{
+  "schema_version": "0.2",
+  "demo": true,
+  "recording_id": "rec_demo_001",
+  "job_id": "job_demo_text_001",
+  "stage": "TEXT_ANALYSIS",
+  "status": "NOT_OBSERVED",
+  "target_subject_id": "usr_demo_a",
+  "target_speaker_id": "spk_demo_a",
+  "speaker_assignment_version": 1,
+  "analysis_grant_versions": {
+    "usr_demo_a": 1,
+    "usr_demo_b": 1
+  },
+  "pipeline_version": "demo-pipeline-0.2",
+  "created_at": "2026-10-27T10:00:00Z",
+  "observations": [],
+  "abstain_reasons": [],
+  "failure": null,
+  "coverage": {
+    "analyzed_utterances": 1,
+    "eligible_target_utterances": 1,
+    "excluded_utterances": 0
+  }
+}

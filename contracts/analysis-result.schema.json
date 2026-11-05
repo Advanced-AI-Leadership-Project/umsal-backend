@@ -1,0 +1,400 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "0.2"
+    },
+    "demo": {
+      "type": "boolean"
+    },
+    "recording_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$"
+    },
+    "stage": {
+      "const": "TEXT_ANALYSIS"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "OBSERVED",
+        "NOT_OBSERVED",
+        "ABSTAINED",
+        "FAILED"
+      ]
+    },
+    "target_subject_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$"
+    },
+    "target_speaker_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$"
+    },
+    "speaker_assignment_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "analysis_grant_versions": {
+      "type": "object",
+      "minProperties": 2,
+      "maxProperties": 2,
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "description": "두 통화 참여자의 analysis grant version. 키는 subject_id."
+    },
+    "pipeline_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Observation"
+      }
+    },
+    "abstain_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "LOW_TRANSCRIPTION_QUALITY",
+          "INSUFFICIENT_CONTEXT",
+          "ATTRIBUTION_UNCERTAIN",
+          "INSUFFICIENT_SUPPORTED_DATA",
+          "INSUFFICIENT_TARGET_SPEECH"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "failure": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Failure"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "analyzed_utterances": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_target_utterances": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excluded_utterances": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "analyzed_utterances",
+        "eligible_target_utterances",
+        "excluded_utterances"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "demo",
+    "recording_id",
+    "job_id",
+    "stage",
+    "status",
+    "target_subject_id",
+    "target_speaker_id",
+    "speaker_assignment_version",
+    "analysis_grant_versions",
+    "pipeline_version",
+    "created_at",
+    "observations",
+    "abstain_reasons",
+    "failure",
+    "coverage"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/umsal/contracts/analysis-result-0.2.schema.json",
+  "title": "엄살 TEXT_ANALYSIS artifact v0.2 — 설계 스키마",
+  "description": "실행 서비스가 아닌 내부 산출물 계약. 실제 조회 응답은 현재 동의로 필터링한다. 시간 순서·근거 ID 존재·대상 귀속·현재 동의는 서버 의미 검사 필요.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "OBSERVED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "observations": {
+            "minItems": 1
+          },
+          "abstain_reasons": {
+            "maxItems": 0
+          },
+          "failure": {
+            "type": "null"
+          },
+          "coverage": {
+            "properties": {
+              "analyzed_utterances": {
+                "minimum": 1
+              },
+              "eligible_target_utterances": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "NOT_OBSERVED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "observations": {
+            "maxItems": 0
+          },
+          "abstain_reasons": {
+            "maxItems": 0
+          },
+          "failure": {
+            "type": "null"
+          },
+          "coverage": {
+            "properties": {
+              "analyzed_utterances": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ABSTAINED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "observations": {
+            "maxItems": 0
+          },
+          "abstain_reasons": {
+            "minItems": 1
+          },
+          "failure": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "FAILED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "observations": {
+            "maxItems": 0
+          },
+          "abstain_reasons": {
+            "maxItems": 0
+          },
+          "failure": {
+            "$ref": "#/$defs/Failure"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "utterance_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$"
+        },
+        "speaker_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$"
+        },
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "utterance_id",
+        "speaker_id",
+        "start_ms",
+        "end_ms"
+      ]
+    },
+    "Observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "observation_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "WORRY",
+            "SLEEP",
+            "APPETITE"
+          ]
+        },
+        "attribution": {
+          "const": "TARGET_SELF"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "minItems": 1
+        },
+        "context_utterance_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$"
+          },
+          "uniqueItems": true
+        },
+        "source_annotation": {
+          "$ref": "#/$defs/SourceAnnotation"
+        }
+      },
+      "required": [
+        "observation_id",
+        "category",
+        "attribution",
+        "evidence",
+        "context_utterance_ids"
+      ]
+    },
+    "SourceAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "observed",
+            "not_used"
+          ]
+        },
+        "raw_value": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "raw_value"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "observed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "raw_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "raw_value": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "INPUT_INVALID",
+            "INFERENCE_ERROR",
+            "OUTPUT_INVALID",
+            "RESOURCE_EXHAUSTED"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "retryable"
+      ]
+    }
+  }
+}

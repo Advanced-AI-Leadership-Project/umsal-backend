@@ -1,0 +1,3247 @@
+openapi: 3.1.0
+info:
+  title: 엄살 MVP API 계약
+  version: 0.2.0
+  description: 설계 스키마. 실제 API/Lambda/DB/IAM/authorizer를 배포하거나 실행하지 않았다. 서버 URL 생략. 사용자CognitoBearer와기계AWS_IAM/SigV4
+    분리. 모든긴처리는비동기.
+tags:
+- name: App
+- name: Worker
+paths:
+  /me:
+    get:
+      operationId: getMe
+      summary: 본인 계정 조회
+      description: 본인 계정 조회
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Actor'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /invitations:
+    post:
+      operationId: createInvitation
+      summary: 만료 초대 코드 생성
+      description: 만료 초대 코드 생성
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '201':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationTicket'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - &id001
+        name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 8
+          maxLength: 128
+        description: actor+route 범위. 같은 key와 다른 요청 hash는409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationRequest'
+  /invitations/{id}/accept:
+    post:
+      operationId: acceptInvitation
+      summary: 초대 상대 확인 후 연결 수락
+      description: 초대 상대 확인 후 연결 수락
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: &id002
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptInvitation'
+  /connections/{id}:
+    get:
+      operationId: getConnection
+      summary: 연결 상태 확인
+      description: 연결 상태 확인
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+    delete:
+      operationId: disconnect
+      summary: 연결 해제·접근 및 예약 공유 차단
+      description: 연결 버전과 양방향 grant를 무효화. 보관 자료 삭제는 별도 명시 요청.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '202':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      - *id001
+  /connections/{id}/consents:
+    get:
+      operationId: getConsents
+      summary: 본인·상대의 범위별 현재 동의 확인
+      description: mine은요청자자신의grant,partner_to_me는상대가나에게공유한scope. both_analysis_allowed는서버계산값. 다른사람동의변경불가.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentState'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+    put:
+      operationId: updateConsents
+      summary: 본인의 분석·공유·전사preview 동의 수정
+      description: 동의 변경을 commit한 후 응답. analysis=false이면 혼합통화 신규/진행 처리 취소. 공유만 해제하면 상대 조회·알림 차단. 양쪽 분석
+        동의는 업로드/claim/commit에서 재검사.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentView'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentUpdate'
+  /uploads:
+    post:
+      operationId: createUpload
+      summary: 양쪽 분석 동의 확인 후 metadata·업로드 URL 발급
+      description: 업로더 선언은 상대 grant를 대체하지 않는다. 50MiB/10분은 제안 한도. 실제media 검증은 worker. API는 metadata만 처리.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '201':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadTicket'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: 신고 크기 한도 초과
+        '415':
+          description: 신고 형식 미지원
+      parameters:
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadRequest'
+  /uploads/{id}/finalize:
+    post:
+      operationId: finalizeUpload
+      summary: 업로드 metadata 고정과 입력준비 예약
+      description: S3 지정version metadata만 검사해 PREPARING_INPUT. maintenance Lambda가 현재 동의/삭제 재검사 후 accepted
+        key로 version 고정복사하고 AUDIO_PREP를 outbox에 등록. decoder 검증 성공을 의미하지 않음.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '202':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinalizeRequest'
+  /jobs/{id}:
+    get:
+      operationId: getJob
+      summary: 작업·GPU 가용 상태 조회
+      description: 작업·GPU 가용 상태 조회
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+  /jobs/{id}/retry:
+    post:
+      operationId: retryJob
+      summary: 재시도 가능한 작업만 다시 예약
+      description: 재시도 가능한 작업만 다시 예약
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '202':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetryRequest'
+  /recordings:
+    get:
+      operationId: listRecordings
+      summary: 허용된 통화 기록 목록
+      description: 허용된 통화 기록 목록
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingPage'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+    delete:
+      operationId: requestBulkDeletion
+      summary: 본인 권한 범위의 일괄 삭제 요청
+      description: CONNECTION_RECORDINGS이면connection_id필수. 본인권한범위삭제만허용. 즉시조회차단후비동기삭제.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '202':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionAccepted'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - *id001
+      - name: scope
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - CONNECTION_RECORDINGS
+          - ALL_MY_RECORDINGS
+      - name: connection_id
+        in: query
+        schema: *id002
+      - name: confirm
+        in: query
+        required: true
+        schema:
+          type: boolean
+          const: true
+  /recordings/{id}:
+    get:
+      operationId: getRecording
+      summary: 상태·화자구간·로컬원본 대응 정보
+      description: 업로더/정보주체 권한 검사. 화자 확인 기본은 로컬 원본+시간구간. 전사 preview는 양쪽 참여자의 uploader 대상 현재 preview scope
+        모두 유효할 때 최소구간만 반환. 일반 가족 열람자에 preview/원음 미제공.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+    delete:
+      operationId: deleteRecording
+      summary: 즉시 조회 차단 후 파생 자료 삭제 예약
+      description: tombstone과취소 commit 후202. S3모든version/전사/근거/집계/checkpoint 삭제는maintenance 추적. 삭제완료 전
+        완전소거라표시하지않음.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '202':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionAccepted'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      - *id001
+  /recordings/{id}/speaker-assignment:
+    put:
+      operationId: assignSpeaker
+      summary: 로컬 원본/구간으로 대상 확인 또는 보류
+      description: 참여자만 확인. CONFIRMED에서 현재 양쪽 동의+입력버전 검사 후assignment_version증가와TEXT_ANALYSIS outbox원자commit.
+        UNSURE는ABSTAINED. 선택변경은이전결과/집계무효화.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '202':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeakerAssignment'
+  /recordings/{id}/result:
+    get:
+      operationId: getResult
+      summary: 현재 scope로 필터된 결과·근거 조회
+      description: 내부artifact그대로반환금지. evidence 비허용이면인용문/시각/근거ID는summary로우회반환하지않음. 현재동의/삭제/assignmentversion검사.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultView'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+  /recordings/{id}/feedback:
+    post:
+      operationId: submitFeedback
+      summary: 근거 오류 접수·집계 잠정 제외
+      description: 근거 오류 접수·집계 잠정 제외
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '202':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
+  /reports/weekly:
+    get:
+      operationId: getWeeklyReport
+      summary: 허용 주간 요약과 관찰량 조회
+      description: 허용 주간 요약과 관찰량 조회
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeeklyReport'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: subject_id
+        in: query
+        required: true
+        schema: *id002
+      - name: week_start
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+  /settings:
+    get:
+      operationId: getSettings
+      summary: 주간 알림 설정
+      description: 주간 알림 설정
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: updateSettings
+      summary: 버전 검사 후 주간 알림 설정
+      description: 버전 검사 후 주간 알림 설정
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdate'
+  /internal/worker/jobs/{id}/claim:
+    post:
+      operationId: claimWorkerJob
+      summary: 현재동의·버전검사와조건부lease획득
+      description: AWS_IAM/SigV4 전용. worker role에는이route와전용실험S3prefix로제한(정적role은job별IAM격리를보장하지않음). complete는서버JSONschema·hash·version·의미검사후DB트랜잭션으로현재양쪽grant/lease/assignment/deletion재검사.
+        durable_committed와DELETE_MESSAGE응답후만SQS삭제. worker의DB직접접속금지. 이미 종료된 job은 TerminalDisposition을 반환할
+        수 있다. stale lease 409는 SQS 삭제 금지. 결과 내구commit ACK 또는 내구 terminal처분 ACK만 같은 job 메시지 폐기 허용.
+      security:
+      - AwsSigV4: []
+      tags:
+      - Worker
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/Lease'
+                - $ref: '#/components/schemas/TerminalDisposition'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+      x-aws-authorization-type: AWS_IAM
+  /internal/worker/jobs/{id}/heartbeat:
+    post:
+      operationId: heartbeatWorkerJob
+      summary: lease갱신또는취소전달
+      description: AWS_IAM/SigV4 전용. worker role에는이route와전용실험S3prefix로제한(정적role은job별IAM격리를보장하지않음). complete는서버JSONschema·hash·version·의미검사후DB트랜잭션으로현재양쪽grant/lease/assignment/deletion재검사.
+        durable_committed와DELETE_MESSAGE응답후만SQS삭제. worker의DB직접접속금지.
+      security:
+      - AwsSigV4: []
+      tags:
+      - Worker
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartbeatResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaseRequest'
+      x-aws-authorization-type: AWS_IAM
+  /internal/worker/jobs/{id}/complete:
+    post:
+      operationId: completeWorkerJob
+      summary: S3artifact검증후현재동의·fencing조건부내구commit
+      description: AWS_IAM/SigV4 전용. worker role에는이route와전용실험S3prefix로제한(정적role은job별IAM격리를보장하지않음). complete는서버JSONschema·hash·version·의미검사후DB트랜잭션으로현재양쪽grant/lease/assignment/deletion재검사.
+        durable_committed와DELETE_MESSAGE응답후만SQS삭제. worker의DB직접접속금지. 이미 종료된 job은 TerminalDisposition을 반환할
+        수 있다. stale lease 409는 SQS 삭제 금지. 결과 내구commit ACK 또는 내구 terminal처분 ACK만 같은 job 메시지 폐기 허용.
+      security:
+      - AwsSigV4: []
+      tags:
+      - Worker
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/CompleteResponse'
+                - $ref: '#/components/schemas/TerminalDisposition'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteRequest'
+      x-aws-authorization-type: AWS_IAM
+  /internal/worker/jobs/{id}/fail:
+    post:
+      operationId: failWorkerJob
+      summary: 오류분류와유한재시도또는종료commit
+      description: AWS_IAM/SigV4 전용. worker role에는이route와전용실험S3prefix로제한(정적role은job별IAM격리를보장하지않음). complete는서버JSONschema·hash·version·의미검사후DB트랜잭션으로현재양쪽grant/lease/assignment/deletion재검사.
+        durable_committed와DELETE_MESSAGE응답후만SQS삭제. worker의DB직접접속금지. 이미 종료된 job은 TerminalDisposition을 반환할
+        수 있다. stale lease 409는 SQS 삭제 금지. 결과 내구commit ACK 또는 내구 terminal처분 ACK만 같은 job 메시지 폐기 허용.
+      security:
+      - AwsSigV4: []
+      tags:
+      - Worker
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/CompleteResponse'
+                - $ref: '#/components/schemas/TerminalDisposition'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FailRequest'
+      x-aws-authorization-type: AWS_IAM
+  /deletions/{id}:
+    get:
+      operationId: getDeletionStatus
+      summary: 삭제 요청의 라이브 삭제와 백업 만료 상태
+      description: 요청자 또는 해당 자료 삭제 상태 조회 권한자만 허용. 타인 deletion_id는404. 라이브 접근차단은 이미 적용되어야 하며 백업만료를 별도로
+        표시.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionStatus'
+      parameters:
+      - &id003
+        name: id
+        in: path
+        required: true
+        schema: &id009
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$
+  /devices:
+    post:
+      operationId: registerDevice
+      summary: 현재 계정의 Android 알림 기기 등록·갱신
+      description: 검증한 Cognito subject에만 bind. 입력owner_id금지. 다른계정에귀속된token/app_instance는409로거절하고기존owner가해제하도록한다.
+        token은암호화보관하고요청본문/응답/오류로그에노출금지. 현재계정의기기토큰회전만갱신. SNS등록은비동기일수있고enabled상태로반영.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '201':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceView'
+      parameters:
+      - &id004
+        name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 8
+          maxLength: 128
+        description: actor+route 범위. 같은 key와 다른 요청 hash는409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegistration'
+  /devices/{id}:
+    delete:
+      operationId: unregisterDevice
+      summary: 로그아웃 전 본인 기기 알림 연결 해제
+      description: 본인에귀속된device만해제. enabled=false를commit하여다음dispatch부터제외. 토큰삭제및SNS endpoint정리는비동기. 로그아웃전호출하며토큰을응답하지않는다.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 버전·lease·idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 한도 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '204':
+          description: 성공
+      parameters:
+      - *id003
+      - *id004
+components:
+  securitySchemes:
+    CognitoBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Cognito access token. 실제HTTPAPI JWT authorizer의issuer/audience설정별도. token_use와client/scope검증.
+    AwsSigV4:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: AWS SigV4서명+API Gateway AWS_IAM route. IAM실행권한이있는worker role만허용. 단순header문자열검사로구현금지.
+      x-amazon-apigateway-authtype: awsSigv4
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id: *id002
+        retryable: &id005
+          type: boolean
+      required:
+      - code
+      - message
+      - request_id
+      - retryable
+    Actor:
+      type: object
+      additionalProperties: false
+      properties:
+        user_id: *id002
+        display_name:
+          type: string
+          maxLength: 80
+      required:
+      - user_id
+      - display_name
+    Accepted:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id: *id002
+        status:
+          type: string
+          enum:
+          - ACCEPTED
+          - PREPARING_INPUT
+          - DELETING
+          - CANCELLED
+        resource_id: *id002
+      required:
+      - request_id
+      - status
+      - resource_id
+    Connection:
+      type: object
+      additionalProperties: false
+      properties:
+        connection_id: *id002
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Actor'
+          minItems: 2
+          maxItems: 2
+        status:
+          type: string
+          enum:
+          - PENDING
+          - ACTIVE
+          - DISCONNECTED
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - connection_id
+      - participants
+      - status
+      - version
+    ConsentUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        expected_version:
+          type: integer
+          minimum: 0
+        analysis_allowed: *id005
+        sharing_scopes:
+          type: array
+          items:
+            type: string
+            enum:
+            - summary
+            - repetition
+            - evidence
+          uniqueItems: true
+        verification_preview_allowed_to_other_participant: *id005
+        demo: *id005
+      required:
+      - expected_version
+      - analysis_allowed
+      - sharing_scopes
+      - verification_preview_allowed_to_other_participant
+    ConsentView:
+      type: object
+      additionalProperties: false
+      properties:
+        connection_id: *id002
+        subject_id: *id002
+        recipient_id: *id002
+        version:
+          type: integer
+          minimum: 1
+        analysis_allowed: *id005
+        sharing_scopes:
+          type: array
+          items:
+            type: string
+            enum:
+            - summary
+            - repetition
+            - evidence
+          uniqueItems: true
+        verification_preview_allowed_to_other_participant: *id005
+        updated_at: &id006
+          type: string
+          format: date-time
+      required:
+      - connection_id
+      - subject_id
+      - recipient_id
+      - version
+      - analysis_allowed
+      - sharing_scopes
+      - verification_preview_allowed_to_other_participant
+      - updated_at
+    ConsentState:
+      type: object
+      additionalProperties: false
+      properties:
+        mine:
+          $ref: '#/components/schemas/ConsentView'
+        partner_to_me:
+          type: object
+          additionalProperties: false
+          properties:
+            subject_id: *id002
+            sharing_scopes:
+              type: array
+              items:
+                type: string
+                enum:
+                - summary
+                - repetition
+                - evidence
+              uniqueItems: true
+          required:
+          - subject_id
+          - sharing_scopes
+        both_analysis_allowed: *id005
+        verification_preview_allowed: *id005
+      required:
+      - mine
+      - partner_to_me
+      - both_analysis_allowed
+      - verification_preview_allowed
+    UploadRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        connection_id: *id002
+        occurred_at: *id006
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 200
+        declared_content_type:
+          type: string
+          enum:
+          - audio/wav
+          - audio/x-wav
+          - audio/mpeg
+          - audio/mp4
+          - audio/x-m4a
+        size_bytes:
+          type: integer
+          minimum: 1
+          maximum: 52428800
+        sha256: &id007
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        participants_permission_confirmed:
+          const: true
+        demo: *id005
+      required:
+      - connection_id
+      - occurred_at
+      - filename
+      - declared_content_type
+      - size_bytes
+      - sha256
+      - participants_permission_confirmed
+    UploadTicket:
+      type: object
+      additionalProperties: false
+      properties:
+        upload_id: *id002
+        recording_id: *id002
+        upload_url:
+          type: string
+          format: uri
+        expires_at: *id006
+        required_headers:
+          type: object
+          additionalProperties:
+            type: string
+        declared_limits:
+          type: object
+          additionalProperties: false
+          properties:
+            max_bytes:
+              type: integer
+            max_duration_seconds:
+              type: integer
+            status:
+              const: PROPOSED_LIMITS
+          required:
+          - max_bytes
+          - max_duration_seconds
+          - status
+      required:
+      - upload_id
+      - recording_id
+      - upload_url
+      - expires_at
+      - required_headers
+      - declared_limits
+    FinalizeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        version_id:
+          type: string
+          minLength: 1
+        sha256: *id007
+        size_bytes:
+          type: integer
+          minimum: 1
+        demo: *id005
+      required:
+      - version_id
+      - sha256
+      - size_bytes
+    Availability:
+      type: object
+      additionalProperties: false
+      properties:
+        worker_availability:
+          type: string
+          enum:
+          - 'OFF'
+          - STARTING
+          - RUNNING
+          - DRAINING
+          - UNKNOWN
+        next_processing_at:
+          anyOf:
+          - *id006
+          - type: 'null'
+      required:
+      - worker_availability
+      - next_processing_at
+    SpeakerInterval:
+      type: object
+      additionalProperties: false
+      properties:
+        speaker_id: *id002
+        start_ms:
+          type: integer
+          minimum: 0
+        end_ms:
+          type: integer
+          minimum: 1
+      required:
+      - speaker_id
+      - start_ms
+      - end_ms
+    Preview:
+      type: object
+      additionalProperties: false
+      properties:
+        utterance_id: *id002
+        speaker_id: *id002
+        text:
+          type: string
+          maxLength: 500
+      required:
+      - utterance_id
+      - speaker_id
+      - text
+      description: 두 참여자의 현재 verification_preview 동의가 uploader에게 유효할 때만 반환하는 최소 preview. 기본 응답에서 생략.
+    Recording:
+      type: object
+      additionalProperties: false
+      properties:
+        recording_id: *id002
+        connection_id: *id002
+        occurred_at: *id006
+        status:
+          type: string
+          enum:
+          - UPLOADING
+          - PREPARING_INPUT
+          - QUEUED_AUDIO
+          - PROCESSING_AUDIO
+          - NEEDS_SPEAKER_CONFIRMATION
+          - QUEUED_TEXT
+          - PROCESSING_TEXT
+          - COMPLETED
+          - ABSTAINED
+          - FAILED
+          - CANCELLED
+          - EXPIRED
+        speaker_assignment_version:
+          type: integer
+          minimum: 0
+        local_file_sha256: *id007
+        speaker_intervals:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpeakerInterval'
+        transcript_preview:
+          type: array
+          items:
+            $ref: '#/components/schemas/Preview'
+          maxItems: 6
+        job_id:
+          anyOf:
+          - *id002
+          - type: 'null'
+        expires_at:
+          anyOf:
+          - *id006
+          - type: 'null'
+        raw_available: *id005
+        raw_expires_at:
+          anyOf:
+          - *id006
+          - type: 'null'
+        availability:
+          $ref: '#/components/schemas/Availability'
+      required:
+      - recording_id
+      - connection_id
+      - occurred_at
+      - status
+      - speaker_assignment_version
+      - job_id
+      - expires_at
+      - raw_available
+      - raw_expires_at
+      - availability
+    Job:
+      type: object
+      additionalProperties: false
+      properties:
+        job_id: *id002
+        recording_id: *id002
+        stage:
+          type: string
+          enum:
+          - AUDIO_PREP
+          - TEXT_ANALYSIS
+        status:
+          type: string
+          enum:
+          - QUEUED
+          - RUNNING
+          - SUCCEEDED
+          - ABSTAINED
+          - FAILED
+          - CANCELLED
+          - EXPIRED
+        recording_status:
+          type: string
+          enum:
+          - UPLOADING
+          - PREPARING_INPUT
+          - QUEUED_AUDIO
+          - PROCESSING_AUDIO
+          - NEEDS_SPEAKER_CONFIRMATION
+          - QUEUED_TEXT
+          - PROCESSING_TEXT
+          - COMPLETED
+          - ABSTAINED
+          - FAILED
+          - CANCELLED
+          - EXPIRED
+        attempt:
+          type: integer
+          minimum: 0
+        failure_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+        retryable: *id005
+        availability:
+          $ref: '#/components/schemas/Availability'
+      required:
+      - job_id
+      - recording_id
+      - stage
+      - status
+      - recording_status
+      - attempt
+      - failure_code
+      - retryable
+      - availability
+    SpeakerAssignment:
+      type: object
+      additionalProperties: false
+      properties:
+        expected_version:
+          type: integer
+          minimum: 0
+        target_subject_id: *id002
+        speaker_id:
+          anyOf:
+          - *id002
+          - type: 'null'
+        decision:
+          type: string
+          enum:
+          - CONFIRMED
+          - UNSURE
+        demo: *id005
+      required:
+      - expected_version
+      - target_subject_id
+      - speaker_id
+      - decision
+      allOf:
+      - if:
+          properties:
+            decision:
+              const: CONFIRMED
+        then:
+          properties:
+            speaker_id: *id002
+        else:
+          properties:
+            speaker_id:
+              type: 'null'
+    EvidenceView:
+      type: object
+      additionalProperties: false
+      properties:
+        utterance_id: *id002
+        start_ms:
+          type: integer
+          minimum: 0
+        end_ms:
+          type: integer
+          minimum: 1
+        text:
+          type: string
+          maxLength: 1500
+      required:
+      - utterance_id
+      - start_ms
+      - end_ms
+      - text
+    ResultView:
+      type: object
+      additionalProperties: false
+      properties:
+        recording_id: *id002
+        status:
+          type: string
+          enum:
+          - OBSERVED
+          - NOT_OBSERVED
+          - ABSTAINED
+          - FAILED
+        target_subject_id: *id002
+        scope:
+          type: array
+          items:
+            type: string
+            enum:
+            - summary
+            - repetition
+            - evidence
+          uniqueItems: true
+        summary:
+          type: string
+          maxLength: 2000
+        observations:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              category:
+                type: string
+                enum:
+                - WORRY
+                - SLEEP
+                - APPETITE
+              evidence:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EvidenceView'
+            required:
+            - category
+        limitations:
+          type: array
+          items:
+            type: string
+        demo: *id005
+      required:
+      - recording_id
+      - status
+      - target_subject_id
+      - scope
+      - limitations
+      - demo
+    FeedbackRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        evidence_utterance_id: *id002
+        kind:
+          type: string
+          enum:
+          - WRONG_SPEAKER
+          - OTHER_PERSON
+          - TRANSCRIPT_ERROR
+          - CONTEXT_ERROR
+          - OTHER
+        comment:
+          type: string
+          maxLength: 1000
+        demo: *id005
+      required:
+      - evidence_utterance_id
+      - kind
+    WeeklyReport:
+      type: object
+      additionalProperties: false
+      properties:
+        report_id: *id002
+        subject_id: *id002
+        week_start:
+          type: string
+          format: date
+        eligible_calls:
+          type: integer
+          minimum: 0
+        abstained_calls:
+          type: integer
+          minimum: 0
+        comparison_available:
+          const: false
+        summary:
+          type: string
+          maxLength: 2000
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              recording_id: *id002
+              category:
+                type: string
+                enum:
+                - WORRY
+                - SLEEP
+                - APPETITE
+            required:
+            - recording_id
+            - category
+        limitations:
+          type: array
+          items:
+            type: string
+        demo: *id005
+      required:
+      - report_id
+      - subject_id
+      - week_start
+      - eligible_calls
+      - abstained_calls
+      - comparison_available
+      - summary
+      - items
+      - limitations
+      - demo
+    Settings:
+      type: object
+      additionalProperties: false
+      properties:
+        version:
+          type: integer
+          minimum: 1
+        weekly_notification_enabled: *id005
+        weekday:
+          type: integer
+          minimum: 1
+          maximum: 7
+        local_time:
+          type: string
+          pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+        timezone:
+          const: Asia/Seoul
+      required:
+      - version
+      - weekly_notification_enabled
+      - weekday
+      - local_time
+      - timezone
+    SettingsUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        weekly_notification_enabled:
+          type: boolean
+        weekday:
+          type: integer
+          minimum: 1
+          maximum: 7
+        local_time:
+          type: string
+          pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+        timezone:
+          const: Asia/Seoul
+        expected_version:
+          type: integer
+          minimum: 1
+      required:
+      - expected_version
+      - weekly_notification_enabled
+      - weekday
+      - local_time
+      - timezone
+    DeletionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          enum:
+          - CONNECTION_RECORDINGS
+          - ALL_MY_RECORDINGS
+        connection_id:
+          anyOf:
+          - *id002
+          - type: 'null'
+        confirm:
+          const: true
+        demo: *id005
+      required:
+      - scope
+      - connection_id
+      - confirm
+      allOf:
+      - if:
+          properties:
+            scope:
+              const: CONNECTION_RECORDINGS
+        then:
+          properties:
+            connection_id: *id002
+    ArtifactRef:
+      type: object
+      additionalProperties: false
+      properties:
+        bucket:
+          type: string
+          minLength: 3
+        key:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        version_id:
+          type: string
+          minLength: 1
+        sha256: *id007
+        size_bytes:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+        purpose:
+          type: string
+          enum:
+          - AUDIO_PREP_RESULT
+          - TEXT_ANALYSIS_RESULT
+      required:
+      - bucket
+      - key
+      - version_id
+      - sha256
+      - size_bytes
+      - purpose
+      description: 출력 JSON만, 최대 1MiB 제안. 서버 allowlist bucket/job-prefix 및 고정 version/hash 검증. 원음은 callback
+        artifact에 넣지 않는다.
+    InputRef:
+      type: object
+      additionalProperties: false
+      properties:
+        bucket:
+          type: string
+          minLength: 3
+        key:
+          type: string
+          minLength: 1
+        version_id:
+          type: string
+          minLength: 1
+        sha256: *id007
+        size_bytes:
+          type: integer
+          minimum: 1
+        purpose:
+          type: string
+          enum:
+          - RAW_AUDIO
+          - AUDIO_PREP_RESULT
+      required:
+      - bucket
+      - key
+      - version_id
+      - sha256
+      - size_bytes
+      - purpose
+    Snapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        analysis_grant_versions: &id008
+          type: object
+          minProperties: 2
+          maxProperties: 2
+          additionalProperties:
+            type: integer
+            minimum: 1
+          description: 두 통화 참여자의 analysis grant version. 키는 subject_id.
+        speaker_assignment_version:
+          type: integer
+          minimum: 0
+        pipeline_version:
+          type: string
+          minLength: 1
+          maxLength: 100
+        accepted_input_version_id:
+          type: string
+          minLength: 1
+      required:
+      - analysis_grant_versions
+      - speaker_assignment_version
+      - pipeline_version
+      - accepted_input_version_id
+    ClaimRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        worker_id: *id002
+        expected_stage:
+          type: string
+          enum:
+          - AUDIO_PREP
+          - TEXT_ANALYSIS
+        pipeline_version:
+          type: string
+          minLength: 1
+          maxLength: 100
+        demo: *id005
+      required:
+      - worker_id
+      - expected_stage
+      - pipeline_version
+    Lease:
+      type: object
+      additionalProperties: false
+      description: TEXT_ANALYSIS는 서버가 확정한 speaker_assignment를 전달한다. assignment version은 snapshot.speaker_assignment_version과 같고 speaker_id는 고정 AUDIO_PREP_RESULT에 존재해야 한다. 이 관계는 서버 의미 검사로 검증한다.
+      properties:
+        job_id: *id002
+        recording_id: *id002
+        stage:
+          type: string
+          enum:
+          - AUDIO_PREP
+          - TEXT_ANALYSIS
+        lease_token:
+          type: string
+          minLength: 16
+        lease_expires_at: *id006
+        snapshot:
+          $ref: '#/components/schemas/Snapshot'
+        speaker_assignment:
+          anyOf:
+          - type: 'null'
+          - type: object
+            additionalProperties: false
+            properties:
+              target_subject_id: *id002
+              speaker_id: *id002
+              version:
+                type: integer
+                minimum: 1
+            required:
+            - target_subject_id
+            - speaker_id
+            - version
+        input_artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/InputRef'
+          minItems: 1
+        allowed_output_bucket:
+          type: string
+        allowed_output_prefix:
+          type: string
+        attempt:
+          type: integer
+          minimum: 1
+        demo: *id005
+      required:
+      - job_id
+      - recording_id
+      - stage
+      - lease_token
+      - lease_expires_at
+      - snapshot
+      - speaker_assignment
+      - input_artifacts
+      - allowed_output_bucket
+      - allowed_output_prefix
+      - attempt
+      - demo
+      allOf:
+      - if:
+          properties:
+            stage:
+              const: AUDIO_PREP
+        then:
+          properties:
+            speaker_assignment:
+              type: 'null'
+        else:
+          properties:
+            speaker_assignment:
+              type: object
+    LeaseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        lease_token:
+          type: string
+          minLength: 16
+        snapshot:
+          $ref: '#/components/schemas/Snapshot'
+        demo: *id005
+      required:
+      - lease_token
+      - snapshot
+    HeartbeatResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        job_id: *id002
+        lease_expires_at:
+          anyOf:
+          - *id006
+          - type: 'null'
+        continue_processing: *id005
+        reason:
+          anyOf:
+          - type: string
+            enum:
+            - CONSENT_REVOKED
+            - DELETED
+            - STALE_ASSIGNMENT
+            - LEASE_LOST
+          - type: 'null'
+      required:
+      - job_id
+      - lease_expires_at
+      - continue_processing
+      - reason
+    CompleteRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        lease_token:
+          type: string
+          minLength: 16
+        snapshot:
+          $ref: '#/components/schemas/Snapshot'
+        artifact:
+          $ref: '#/components/schemas/ArtifactRef'
+        demo: *id005
+      required:
+      - lease_token
+      - snapshot
+      - artifact
+    CompleteResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        job_id: *id002
+        durable_committed: *id005
+        terminal: *id005
+        acknowledgement:
+          type: string
+          enum:
+          - DELETE_MESSAGE
+          - DO_NOT_DELETE_MESSAGE
+        recording_status:
+          type: string
+          enum:
+          - UPLOADING
+          - PREPARING_INPUT
+          - QUEUED_AUDIO
+          - PROCESSING_AUDIO
+          - NEEDS_SPEAKER_CONFIRMATION
+          - QUEUED_TEXT
+          - PROCESSING_TEXT
+          - COMPLETED
+          - ABSTAINED
+          - FAILED
+          - CANCELLED
+          - EXPIRED
+        result_version:
+          anyOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+        demo: *id005
+      required:
+      - job_id
+      - durable_committed
+      - terminal
+      - acknowledgement
+      - recording_status
+      - result_version
+      - demo
+      allOf:
+      - if:
+          properties:
+            acknowledgement:
+              const: DELETE_MESSAGE
+        then:
+          properties:
+            durable_committed:
+              const: true
+    FailRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        lease_token:
+          type: string
+          minLength: 16
+        snapshot:
+          $ref: '#/components/schemas/Snapshot'
+        failure_code:
+          type: string
+          enum:
+          - INPUT_INVALID
+          - TRANSIENT_IO
+          - INFERENCE_ERROR
+          - RESOURCE_EXHAUSTED
+          - OUTPUT_INVALID
+        retryable: *id005
+        demo: *id005
+      required:
+      - lease_token
+      - snapshot
+      - failure_code
+      - retryable
+    AudioUtterance:
+      type: object
+      additionalProperties: false
+      properties:
+        utterance_id: *id002
+        speaker_id: *id002
+        start_ms:
+          type: integer
+          minimum: 0
+        end_ms:
+          type: integer
+          minimum: 1
+        text:
+          type: string
+          maxLength: 5000
+        quality_flags:
+          type: array
+          items:
+            type: string
+            enum:
+            - OVERLAP
+            - LOW_ASR_QUALITY
+            - TOO_SHORT
+          uniqueItems: true
+      required:
+      - utterance_id
+      - speaker_id
+      - start_ms
+      - end_ms
+      - text
+      - quality_flags
+    AudioPrepArtifact:
+      type: object
+      additionalProperties: false
+      properties:
+        schema_version:
+          const: '0.2'
+        demo: *id005
+        recording_id: *id002
+        job_id: *id002
+        stage:
+          const: AUDIO_PREP
+        status:
+          type: string
+          enum:
+          - READY_FOR_CONFIRMATION
+          - ABSTAINED
+          - FAILED
+        duration_ms:
+          type: integer
+          minimum: 0
+          maximum: 600000
+        audio_sha256: *id007
+        pipeline_version:
+          type: string
+        analysis_grant_versions: *id008
+        utterances:
+          type: array
+          items:
+            $ref: '#/components/schemas/AudioUtterance'
+        reason_codes:
+          type: array
+          items:
+            type: string
+            enum:
+            - SILENCE
+            - TOO_SHORT
+            - INVALID_MEDIA
+            - LOW_QUALITY
+            - UNSUPPORTED_PARTICIPANTS
+            - INFERENCE_ERROR
+      required:
+      - schema_version
+      - demo
+      - recording_id
+      - job_id
+      - stage
+      - status
+      - duration_ms
+      - audio_sha256
+      - pipeline_version
+      - analysis_grant_versions
+      - utterances
+      - reason_codes
+      allOf:
+      - if:
+          properties:
+            status:
+              const: READY_FOR_CONFIRMATION
+        then:
+          properties:
+            utterances:
+              minItems: 1
+            reason_codes:
+              maxItems: 0
+        else:
+          properties:
+            reason_codes:
+              minItems: 1
+    QueueMessage:
+      type: object
+      additionalProperties: false
+      properties:
+        demo: *id005
+        job_id: *id002
+        recording_id: *id002
+        stage:
+          type: string
+          enum:
+          - AUDIO_PREP
+          - TEXT_ANALYSIS
+        pipeline_version:
+          type: string
+      required:
+      - demo
+      - job_id
+      - recording_id
+      - stage
+      - pipeline_version
+    AnalysisArtifact:
+      $ref: ./analysis-result.schema.json
+    SourceAnnotation:
+      type: object
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum:
+          - unknown
+          - observed
+          - not_used
+        raw_value:
+          anyOf:
+          - type: integer
+            minimum: 0
+            maximum: 3
+          - type: 'null'
+      required:
+      - state
+      - raw_value
+      allOf:
+      - if:
+          properties:
+            state:
+              const: observed
+        then:
+          properties:
+            raw_value:
+              type: integer
+              minimum: 0
+              maximum: 3
+        else:
+          properties:
+            raw_value:
+              type: 'null'
+    InvitationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        demo: *id005
+      required: []
+    InvitationTicket:
+      type: object
+      additionalProperties: false
+      properties:
+        invitation_id: *id002
+        invite_code:
+          type: string
+        expires_at: *id006
+      required:
+      - invitation_id
+      - invite_code
+      - expires_at
+    AcceptInvitation:
+      type: object
+      additionalProperties: false
+      properties:
+        invite_code:
+          type: string
+          minLength: 6
+          maxLength: 64
+        demo: *id005
+      required:
+      - invite_code
+    RetryRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        demo: *id005
+      required: []
+    RecordingPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Recording'
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+      - next_cursor
+    TerminalDisposition:
+      type: object
+      additionalProperties: false
+      properties:
+        job_id: *id009
+        terminal:
+          const: true
+        acknowledgement:
+          const: DELETE_MESSAGE
+        reason:
+          type: string
+          enum:
+          - ALREADY_COMPLETED
+          - CANCELLED
+          - DELETED
+          - EXPIRED
+        durable_disposition_recorded:
+          const: true
+        demo: &id011
+          type: boolean
+      required:
+      - job_id
+      - terminal
+      - acknowledgement
+      - reason
+      - durable_disposition_recorded
+      - demo
+      description: 이미 끝난/취소/삭제/만료 작업의 내구 처분 기록. 새 모델 결과 commit이 아니며 이 응답을 받은 같은 job 메시지만 폐기.
+    DeletionAccepted:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id: *id009
+        deletion_id: *id009
+        status:
+          const: DELETING
+        live_access_blocked:
+          const: true
+        status_url:
+          type: string
+          pattern: ^/deletions/[A-Za-z0-9_-]+$
+      required:
+      - request_id
+      - deletion_id
+      - status
+      - live_access_blocked
+      - status_url
+    DeletionStatus:
+      type: object
+      additionalProperties: false
+      properties:
+        deletion_id: *id009
+        scope:
+          type: string
+          enum:
+          - RECORDING
+          - CONNECTION_RECORDINGS
+          - ALL_MY_RECORDINGS
+        live_access_blocked:
+          const: true
+        live_deletion_status:
+          type: string
+          enum:
+          - PENDING
+          - IN_PROGRESS
+          - COMPLETED
+          - FAILED
+        live_deleted_at:
+          anyOf:
+          - &id010
+            type: string
+            format: date-time
+          - type: 'null'
+        backup_status:
+          type: string
+          enum:
+          - RETAINED_PENDING_EXPIRY
+          - EXPIRED
+          - NOT_APPLICABLE
+        backup_expires_at:
+          anyOf:
+          - *id010
+          - type: 'null'
+        retryable: *id011
+        last_error_code:
+          anyOf:
+          - type: string
+            enum:
+            - TEMPORARY_STORAGE_ERROR
+            - DEPENDENT_JOB_RUNNING
+            - BACKUP_POLICY_PENDING
+          - type: 'null'
+      required:
+      - deletion_id
+      - scope
+      - live_access_blocked
+      - live_deletion_status
+      - live_deleted_at
+      - backup_status
+      - backup_expires_at
+      - retryable
+      - last_error_code
+      description: 라이브 조회 차단·라이브 실제 삭제·백업 보관 만료는 별개. live COMPLETED만으로 모든 백업까지 완전 소거됐다고 표시하지 않는다.
+      allOf:
+      - if:
+          properties:
+            live_deletion_status:
+              const: COMPLETED
+        then:
+          properties:
+            live_deleted_at: *id010
+        else:
+          properties:
+            live_deleted_at:
+              type: 'null'
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      properties:
+        app_instance_id: *id009
+        platform:
+          const: ANDROID
+        push_token:
+          type: string
+          minLength: 20
+          maxLength: 8192
+          writeOnly: true
+        demo: *id011
+      required:
+      - app_instance_id
+      - platform
+      - push_token
+      description: owner_id 입력 없음. 소유자는 검증한 Cognito subject로만 결정. 토큰은 응답/로그에서 제거.
+    DeviceView:
+      type: object
+      additionalProperties: false
+      properties:
+        device_id: *id009
+        platform:
+          const: ANDROID
+        enabled: *id011
+        updated_at: *id010
+      required:
+      - device_id
+      - platform
+      - enabled
+      - updated_at
+      description: 기기 토큰·SNS endpoint/개인식별자는 응답하지 않는다.

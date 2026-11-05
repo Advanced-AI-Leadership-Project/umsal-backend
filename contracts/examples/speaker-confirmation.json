@@ -1,0 +1,7 @@
+{
+  "demo": true,
+  "expected_version": 0,
+  "target_subject_id": "usr_demo_a",
+  "speaker_id": "spk_demo_a",
+  "decision": "CONFIRMED"
+}

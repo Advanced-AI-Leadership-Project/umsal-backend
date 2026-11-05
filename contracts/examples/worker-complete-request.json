@@ -1,0 +1,21 @@
+{
+  "demo": true,
+  "lease_token": "demo_lease_token_not_a_secret_001",
+  "snapshot": {
+    "analysis_grant_versions": {
+      "usr_demo_a": 1,
+      "usr_demo_b": 1
+    },
+    "speaker_assignment_version": 1,
+    "pipeline_version": "demo-pipeline-0.2",
+    "accepted_input_version_id": "demo-accepted-version-001"
+  },
+  "artifact": {
+    "bucket": "umsal-demo-artifacts",
+    "key": "jobs/job_demo_text_001/result.json",
+    "version_id": "demo-result-version-001",
+    "sha256": "4274b086f18a66584e2d5f3ed1a85a414a0f0db32a963af3dc35a0c2272c3851",
+    "size_bytes": 1043,
+    "purpose": "TEXT_ANALYSIS_RESULT"
+  }
+}
