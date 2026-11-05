@@ -30,7 +30,7 @@ flowchart TD
 |---|---|---|
 | `policy` | 이슈·브랜치·commit·PR 양식·현재 head 독립 리뷰·민감 파일 정책 | 정책 workflow 로그 |
 | `quality` | 전체 tracked tree의 비밀값 패턴·원음/모델/개인 환경 파일·큰 파일·symlink 검사, Git/병합 하네스 회귀 검사 | unittest·트리 검사 로그 |
-| `python` | Ruff·포맷·FastAPI 앱/Lambda 핸들러 테스트(합성 이벤트, AWS 자격 증명 없음) | JUnit·coverage XML/JSON |
+| `python` | Ruff·포맷·FastAPI 앱/Lambda 핸들러 테스트(합성 이벤트, AWS 자격 증명 없음). 작업 안의 일회용 PostgreSQL 17 서비스로 실제 DB 테스트를 실행하며, `REQUIRE_DATABASE_TESTS=1`이라 DB 테스트가 건너뛰어지면 실패한다 | JUnit·coverage XML/JSON |
 | `security` | Python 알려진 advisory 차단. 조회 장애도 실패 | pip-audit JSON |
 | `harness` | `quality/python/security`가 **모두 success** | 최종 집계 로그 |
 

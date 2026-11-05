@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -78,3 +79,14 @@ def test_unreachable_database_is_unavailable_without_leaking_url(monkeypatch, ca
     assert response.json()["checks"]["aurora"] == "unavailable"
     assert "synthetic-secret" not in response.text
     assert "synthetic-secret" not in caplog.text
+
+
+def test_database_fixture_fails_when_required(pytester):
+    pytester.makeconftest((Path(__file__).parent / "conftest.py").read_text(encoding="utf-8"))
+    pytester.makepyfile("def test_needs_db(test_database_url):\n    pass\n")
+    env = {"TEST_DATABASE_URL": "", "REQUIRE_DATABASE_TESTS": "1"}
+    with patch.dict("os.environ", env):
+        # pytest.fail inside a fixture is reported as an error; either way CI fails.
+        pytester.runpytest("-p", "no:cacheprovider").assert_outcomes(errors=1)
+    with patch.dict("os.environ", {"TEST_DATABASE_URL": "", "REQUIRE_DATABASE_TESTS": ""}):
+        pytester.runpytest("-p", "no:cacheprovider").assert_outcomes(skipped=1)

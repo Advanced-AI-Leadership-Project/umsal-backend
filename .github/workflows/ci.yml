@@ -60,6 +60,26 @@ jobs:
   python:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Disposable synthetic database for tests/test_db_integration.py and the API tests
+    # that need real SQL. Same image as compose.yaml; no secrets, loopback port only.
+    services:
+      postgres:
+        image: postgres:17.11-bookworm@sha256:839fbb5a4942a7758dd93e18b42ea5649807491a0545b5eeeb8f0b8bb11857a5
+        env:
+          POSTGRES_USER: umsal
+          POSTGRES_PASSWORD: umsal_ci
+          POSTGRES_DB: umsal_test
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U umsal -d umsal_test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://umsal:umsal_ci@127.0.0.1:5432/umsal_test
+      # A database test that skips in CI is a failure, not a pass.
+      REQUIRE_DATABASE_TESTS: "1"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
