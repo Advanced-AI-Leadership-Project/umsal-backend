@@ -87,20 +87,27 @@ def _run_concurrently(*targets, timeout: float = CONCURRENCY_TIMEOUT_SECONDS) ->
     import threading
     import time
 
-    barrier = threading.Barrier(len(targets), timeout=timeout)
+    # The barrier gives up slightly before the join deadline, so a target that never
+    # reaches it is reported as BrokenBarrierError rather than as "did not finish".
+    barrier = threading.Barrier(len(targets), timeout=timeout * 0.8)
     errors: list[tuple[str, BaseException]] = []
 
-    def wrap(target):
+    def wrap(name: str, target):
         def run() -> None:
             try:
                 barrier.wait()
                 target()
             except BaseException as error:  # reported to the test below
-                errors.append((target.__name__, error))
+                errors.append((name, error))
 
         return run
 
-    threads = [threading.Thread(target=wrap(t), name=t.__name__, daemon=True) for t in targets]
+    # Index the names so passing the same function twice still says which one hung.
+    names = [f"{index}:{target.__name__}" for index, target in enumerate(targets)]
+    threads = [
+        threading.Thread(target=wrap(name, target), name=name, daemon=True)
+        for name, target in zip(names, targets, strict=True)
+    ]
     for thread in threads:
         thread.start()
     deadline = time.monotonic() + timeout
@@ -110,8 +117,8 @@ def _run_concurrently(*targets, timeout: float = CONCURRENCY_TIMEOUT_SECONDS) ->
     if stuck:
         pytest.fail(f"concurrent targets did not finish within {timeout}s: {stuck}")
     if errors:
-        name, error = errors[0]
-        raise AssertionError(f"concurrent target {name!r} raised {error!r}") from error
+        summary = ", ".join(f"{name!r} raised {error!r}" for name, error in errors)
+        raise AssertionError(f"concurrent targets failed: {summary}") from errors[0][1]
 
 
 @pytest.fixture
