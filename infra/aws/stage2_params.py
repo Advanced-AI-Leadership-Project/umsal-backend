@@ -6,7 +6,8 @@ Lambda in the VPC never has to reach the internet. Nothing is created or changed
 
 Usage (operator machine, logged in with the project profile):
   python infra/aws/stage2_params.py \
-      --api-key lambda/<sha>.zip --migrate-key lambda/<sha>-migrate.zip
+      --api-key lambda/<sha>.zip --migrate-key lambda/<sha>-migrate.zip [--with-storage]
+(--with-storage, stage 3: also reads umsal-backend-storage and adds DynamoTableName.)
   aws cloudformation deploy ... --parameter-overrides file://.local/stage2/api-params.json
 (--parameter-overrides accepts a JSON list of "Key=Value" strings via file://; verify
 with a change set before executing.)
@@ -74,6 +75,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--bucket", help="artifact bucket (default: bootstrap stack output)")
     parser.add_argument("--api-key", required=True)
     parser.add_argument("--migrate-key", required=True)
+    parser.add_argument(
+        "--with-storage",
+        action="store_true",
+        help="stage 3 (#52): add DynamoTableName from the umsal-backend-storage stack",
+    )
     args = parser.parse_args(argv)
 
     network = stack_outputs("umsal-backend-network")
@@ -93,6 +99,8 @@ def main(argv: list[str] | None = None) -> None:
         "CognitoAppClientIds": auth["WebClientId"],
         "CognitoJwks": jwks,
     }
+    if args.with_storage:
+        api["DynamoTableName"] = stack_outputs("umsal-backend-storage")["ResultsTableName"]
     jobs = {
         "ArtifactBucket": bucket,
         "ApiArtifactKey": args.api_key,

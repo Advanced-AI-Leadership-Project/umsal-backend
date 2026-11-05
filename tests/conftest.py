@@ -25,6 +25,7 @@ _APP_ENV_VARS = (
     "AWS_REGION",
     "MIGRATIONS_ROOT",
     "UMSAL_ENV",
+    "DYNAMODB_TABLE",
 )
 
 
