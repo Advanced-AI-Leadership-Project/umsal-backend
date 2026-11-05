@@ -68,13 +68,14 @@ def create_health_router(probes: Mapping[DependencyName, Probe] | None = None) -
 
     router = APIRouter(prefix="/api/health", tags=["health"])
 
-    @router.get("/live", response_model=LiveResponse)
+    @router.get("/live", response_model=LiveResponse, operation_id="getHealthLive")
     def live() -> LiveResponse:
         return LiveResponse(environment=_environment())
 
     @router.get(
         "/ready",
         response_model=ReadyResponse,
+        operation_id="getHealthReady",
         responses={503: {"model": ReadyResponse}},
     )
     def ready() -> ReadyResponse | JSONResponse:
