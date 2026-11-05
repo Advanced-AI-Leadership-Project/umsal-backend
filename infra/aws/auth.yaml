@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  DRAFT (not deployed, #38). UMSAL Cognito user pool for the PWA (stack umsal-backend-auth):
-  managed login with authorization code + PKCE, a public app client without a secret, and
-  short-lived access tokens verified by the backend (api-contract D3).
+  UMSAL Cognito user pool for the PWA (stack umsal-backend-auth, deployed 2026-11-05):
+  managed login with authorization code + PKCE, a public app client without a secret,
+  short-lived access tokens verified by the backend (api-contract D3), and the UMSAL Forest
+  managed login branding (#57).
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -89,7 +90,324 @@ Resources:
     Properties:
       UserPoolId: !Ref UserPool
       ClientId: !Ref WebClient
-      UseCognitoProvidedValues: true
+      # UMSAL Forest (umsal-pwa docs/brand-identity.md): Cognito's merged defaults with the
+      # light-mode colors mapped to the brand palette, light mode only, form logo on.
+      # Test: tests/test_auth_branding.py.
+      UseCognitoProvidedValues: false
+      Settings:
+        categories:
+          auth:
+            authMethodOrder:
+            - - display: BUTTON
+                type: FEDERATED
+              - display: INPUT
+                type: USERNAME_PASSWORD
+            federation:
+              interfaceStyle: BUTTON_LIST
+              order: []
+          form:
+            displayGraphics: true
+            instructions:
+              enabled: false
+            languageSelector:
+              enabled: false
+            location:
+              horizontal: CENTER
+              vertical: CENTER
+            sessionTimerDisplay: NONE
+          global:
+            colorSchemeMode: LIGHT
+            pageFooter:
+              enabled: false
+            pageHeader:
+              enabled: false
+            spacingDensity: REGULAR
+          signUp:
+            acceptanceElements:
+            - enforcement: NONE
+              textKey: en
+        componentClasses:
+          buttons:
+            borderRadius: 12.0
+          divider:
+            darkMode:
+              borderColor: 232b37ff
+            lightMode:
+              borderColor: e2e9e3ff
+          dropDown:
+            borderRadius: 10.0
+            darkMode:
+              defaults:
+                itemBackgroundColor: 192534ff
+              hover:
+                itemBackgroundColor: 081120ff
+                itemBorderColor: 5f6b7aff
+                itemTextColor: e9ebedff
+              match:
+                itemBackgroundColor: d1d5dbff
+                itemTextColor: 89bdeeff
+            lightMode:
+              defaults:
+                itemBackgroundColor: ffffffff
+              hover:
+                itemBackgroundColor: f4f4f4ff
+                itemBorderColor: 7d8998ff
+                itemTextColor: 1b2e27ff
+              match:
+                itemBackgroundColor: 1b2e27ff
+                itemTextColor: 176b50ff
+          focusState:
+            darkMode:
+              borderColor: 539fe5ff
+            lightMode:
+              borderColor: 176b50ff
+          idpButtons:
+            icons:
+              enabled: true
+          input:
+            borderRadius: 10.0
+            darkMode:
+              defaults:
+                backgroundColor: 0f1b2aff
+                borderColor: 5f6b7aff
+              placeholderColor: 8d99a8ff
+            lightMode:
+              defaults:
+                backgroundColor: ffffffff
+                borderColor: 7d8998ff
+              placeholderColor: 62736aff
+          inputDescription:
+            darkMode:
+              textColor: 8d99a8ff
+            lightMode:
+              textColor: 62736aff
+          inputLabel:
+            darkMode:
+              textColor: d1d5dbff
+            lightMode:
+              textColor: 1b2e27ff
+          link:
+            darkMode:
+              defaults:
+                textColor: 539fe5ff
+              hover:
+                textColor: 89bdeeff
+            lightMode:
+              defaults:
+                textColor: 176b50ff
+              hover:
+                textColor: 10553fff
+          optionControls:
+            darkMode:
+              defaults:
+                backgroundColor: 0f1b2aff
+                borderColor: 7d8998ff
+              selected:
+                backgroundColor: 539fe5ff
+                foregroundColor: 000716ff
+            lightMode:
+              defaults:
+                backgroundColor: ffffffff
+                borderColor: 7d8998ff
+              selected:
+                backgroundColor: 176b50ff
+                foregroundColor: ffffffff
+          statusIndicator:
+            darkMode:
+              error:
+                backgroundColor: 1a0000ff
+                borderColor: eb6f6fff
+                indicatorColor: eb6f6fff
+              pending:
+                indicatorColor: AAAAAAAA
+              success:
+                backgroundColor: 001a02ff
+                borderColor: 29ad32ff
+                indicatorColor: 29ad32ff
+              warning:
+                backgroundColor: 1d1906ff
+                borderColor: e0ca57ff
+                indicatorColor: e0ca57ff
+            lightMode:
+              error:
+                backgroundColor: fff7f7ff
+                borderColor: d91515ff
+                indicatorColor: d91515ff
+              pending:
+                indicatorColor: AAAAAAAA
+              success:
+                backgroundColor: f2fcf3ff
+                borderColor: 037f0cff
+                indicatorColor: 037f0cff
+              warning:
+                backgroundColor: fffce9ff
+                borderColor: 8d6605ff
+                indicatorColor: 8d6605ff
+        components:
+          alert:
+            borderRadius: 12.0
+            darkMode:
+              error:
+                backgroundColor: 1a0000ff
+                borderColor: eb6f6fff
+            lightMode:
+              error:
+                backgroundColor: fff7f7ff
+                borderColor: d91515ff
+          favicon:
+            enabledTypes:
+            - ICO
+            - SVG
+          form:
+            backgroundImage:
+              enabled: false
+            borderRadius: 16.0
+            darkMode:
+              backgroundColor: 0f1b2aff
+              borderColor: 424650ff
+            lightMode:
+              backgroundColor: ffffffff
+              borderColor: e2e9e3ff
+            logo:
+              enabled: true
+              formInclusion: IN
+              location: CENTER
+              position: TOP
+          idpButton:
+            custom: {}
+            standard:
+              darkMode:
+                active:
+                  backgroundColor: 354150ff
+                  borderColor: 89bdeeff
+                  textColor: 89bdeeff
+                defaults:
+                  backgroundColor: 0f1b2aff
+                  borderColor: c6c6cdff
+                  textColor: c6c6cdff
+                hover:
+                  backgroundColor: 192534ff
+                  borderColor: 89bdeeff
+                  textColor: 89bdeeff
+              lightMode:
+                active:
+                  backgroundColor: e2efe5ff
+                  borderColor: 10553fff
+                  textColor: 10553fff
+                defaults:
+                  backgroundColor: ffffffff
+                  borderColor: 424650ff
+                  textColor: 424650ff
+                hover:
+                  backgroundColor: f1f7f2ff
+                  borderColor: 10553fff
+                  textColor: 10553fff
+          pageBackground:
+            darkMode:
+              color: 0f1b2aff
+            image:
+              enabled: false
+            lightMode:
+              color: f3f6f2ff
+          pageFooter:
+            backgroundImage:
+              enabled: false
+            darkMode:
+              background:
+                color: 0f141aff
+              borderColor: 424650ff
+            lightMode:
+              background:
+                color: fafafaff
+              borderColor: d5dbdbff
+            logo:
+              enabled: false
+              location: START
+          pageHeader:
+            backgroundImage:
+              enabled: false
+            darkMode:
+              background:
+                color: 0f141aff
+              borderColor: 424650ff
+            lightMode:
+              background:
+                color: fafafaff
+              borderColor: d5dbdbff
+            logo:
+              enabled: false
+              location: START
+          pageText:
+            darkMode:
+              bodyColor: b6bec9ff
+              descriptionColor: b6bec9ff
+              headingColor: d1d5dbff
+            lightMode:
+              bodyColor: 1b2e27ff
+              descriptionColor: 62736aff
+              headingColor: 1b2e27ff
+          phoneNumberSelector:
+            displayType: TEXT
+          primaryButton:
+            darkMode:
+              active:
+                backgroundColor: 539fe5ff
+                textColor: 000716ff
+              defaults:
+                backgroundColor: 539fe5ff
+                textColor: 000716ff
+              disabled:
+                backgroundColor: ffffffff
+                borderColor: ffffffff
+              hover:
+                backgroundColor: 89bdeeff
+                textColor: 000716ff
+            lightMode:
+              active:
+                backgroundColor: 10553fff
+                textColor: ffffffff
+              defaults:
+                backgroundColor: 176b50ff
+                textColor: ffffffff
+              disabled:
+                backgroundColor: ffffffff
+                borderColor: ffffffff
+              hover:
+                backgroundColor: 10553fff
+                textColor: ffffffff
+          secondaryButton:
+            darkMode:
+              active:
+                backgroundColor: 354150ff
+                borderColor: 89bdeeff
+                textColor: 89bdeeff
+              defaults:
+                backgroundColor: 0f1b2aff
+                borderColor: 539fe5ff
+                textColor: 539fe5ff
+              hover:
+                backgroundColor: 192534ff
+                borderColor: 89bdeeff
+                textColor: 89bdeeff
+            lightMode:
+              active:
+                backgroundColor: e2efe5ff
+                borderColor: 10553fff
+                textColor: 10553fff
+              defaults:
+                backgroundColor: ffffffff
+                borderColor: 176b50ff
+                textColor: 176b50ff
+              hover:
+                backgroundColor: f1f7f2ff
+                borderColor: 10553fff
+                textColor: 10553fff
+      Assets:
+        # infra/aws/branding/logo-symbol.png (umsal-pwa apps/web/public/brand, 128px).
+        - Category: FORM_LOGO
+          ColorMode: LIGHT
+          Extension: PNG
+          Bytes: iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAQAElEQVR4Aey9DbzlV1Xf/Vv73DsTkkDe7r2JSquPxbYqj60f0PJ8PhUTBSTFzEwC8eExTwUVkpm8FFvborYNg0RUais0zEtCwQgo1ci8IS9tkaZKaxFasBWxAi20EjJzZwYCkszMvee/+v2t///cGYaQZM5MMsPM7LPXXu9rr732/v/P/5xzM2k6287oCpw9AGf09ktnD8DZA3CGV+DUXX48HqmdvQM8HlV+9HMcuen56N2mtzx7AKav3WPh+bhs+pGJnz0AR1bjDKTPHoAzcNO95AmcPQCTSpyh+OwBOEM3frLsswdgUokzFJ89AGfoxk+WffYATCpxhuKzB+AM3fjJss8egEklzlB89gCcYRt/9HLPHoCjK3KG8WcPwBm24Ucv9+wBOLoiZxh/9gCcYRt+9HIfswMw92Nrvn5hw7o3z92w5i2GhQHPXb/2zXPXr3merr12dHQyZyy/8fKZS264au0l66kNdVrYsOYtrtfC9T2+7EevnH+sauMDcOQfIRz3PBf9+POeOrf+qg+0VfH7qbxOLX7Y0BmHaV0Xo/arc5cc/NP5Dev+1XFP+DUe4NKbrvk38/ee/99b6I1sxnWKuK6L0XVda9d1o7guqVu3auZDczde85+e9OIf/JYTvVzm1In5I4Trr5/lFL98NDP6iBRPH4eezGKi2kAkRy2agoNxsaL9X12X186vX/tbF99y5ZMkodWZ0TaqXbDheRctrF9z93h5+fuztW+iHhdRnwhOgrLfkohQJ+o1Gv2FyPF3rVo9+tj8hrUv1/VPm9UJau0ExYmFmd0vay1ezdUeBYro18Fi2HJxzlpEbXINkmKEjXR1Ozhz56Xrr37MbnM6xdr8p37wL812cTebew0bHpQqMiIqTcpFqWQmKWAUhSbYqlbMqxfaN/wdJMfUv5px+2qKY5HPr7/q1eT6i/h4FeEFNA8IlLCAKnfRAlBxPiE4hFq7dhzjf6aNG09IPjqV229eO4rV7Rejja4ImsL1MEjBy/vvy2Ky+VZTW3HXjIiGibXxGu6cP6cT0I674JduWPdqxegnFU7M2x6CVoaxJCNAk+YVWghvmzTdIkLth+f3/OF7dJq3uX938D1di7USS1ZfmJjsQs+qaiK35MbJ1iMZDgEUF5TtMn/y0puufqGtjgcmU08bg4s4v4t1zCidFWGMyNt8oEACGSAA+bAc9Sc85TKgpKcX+wzxLAFzWvZvvv5ZF1CwZ7DQ6OsgdbVsKXglIAoSEoiNFpAa2kD4JIiLLdqq7LofR2lz0HT9uA7A3PqrX8JGPq1SIw1yX8mCFItOBa8iv3zwzNmLIlhoQ5B53nzb/Y5eevqNX2jnv02Kc0Neq4aLwBjoeCJIA0eDTWaUW1IbVzAiMHKnaJC+a1D7b77kpc/7fttNC2QyrSt+ufzkDF0gcnJqYqujB5YQcnPerNSkUMmtNPYppbnkUTfrqlB2TRtdIZ1WzZ90IrpzpVq0ooVCNFfKEMVRRrbepIHCcmlg5J4egFKgKdNvjNHobyKcuk9/APgih+RmReKVEvmRujiVYitRIRjSMsXtioyl4JX4aAKlDPXNOJ5y8WfXHNep7mOdWuPqpdVrWd23+WgnhOsk8ArIhbBANqFWgcogsIpnLJorBRL7iOBzovcwEEzV7TyV4/x5X5pXtqcQIEQeCsKQ0wRblNzSktNN9hICq415H1Qzj86HxvqkKnzpEaC/ODNqvE/qtGrj1r451S7xPkcVQnLJVM0UkFaETbgjuiqHISIUAdg+pBCVV7XV2nj5qKgphpUox+q7NDpnNeme75yTY1gbTWIVB8yXPJAQGNSCGQJIL4+F2B4tNiwSmySGD4aSh4E2M/WCKmA/OLyh5072mOP07THZOgjGPrWIUOtJZBJsQdbOpNwsc70MGmyLllzSSy781IXn66u0RxLXNI9k9FD6GC0lx7S2Tl0oMPLZNWahctLGiL3lUqeeTUsAG3K5y7gGe1tuA4whj7M7kOHRhqlMBmPThoE9AWiyJO6Kk2jJun0YKCK1gfKMQFIXUJkVzhS1lhuUkaq+KLNNJCU+5mHqA5BjvuxNkQJzeqyMoOkRCNIEYMyChCzkFwcBsU8FzwqmhFgRISl4iTZ1WvhO3Z3pxNm0YcIfP04XQYpgjYACmiIEYroZi+ogRFEWhVQ0uIyyuJJVjIBvs+Mupr5jTl3pjFGLiBmnEMGmJkA6rMldloWCXAG5HT7hJcG+bvlWAcmVYR+78CaA5PTrdY+rxcvLlBh9EfgQBLR5A5XiIFDPADRpFGywMVUGVkV3zhNWjWdMTgNTH4BzmC0jonKC1mGiqIw+tN+kBBlhU5aWlT7m0Fj6ELD3puSWGeq6yf3SktMEYpSiJuFiiI3NZBx6DHRIEQywjJK/JeJyqkohbxZiG8gwlBS8s7b25+0gFdZUbWpHzxY+viThfNQPYv9E/qidtqXOGpae2EZEHd6E9/talgzbSEtUB6ao02xoPtSsk42ny3WqFXrZCAaECIqSMYpiSIp65WCjUojCJvJU40o7V+chmK5PfQAO1HxkZcymRvSJBnyBecPAi3QDMDYKKmCei0LB0HxlDOFkWqdf8/KiluXNg6L7asiS9YPpNqmb9Ygtk7hwdERDZzllHGU7NPU+Tu14bo47jiHAyMrorMUpkaiRBcNxDZJnTWRfCjh8EPQm2GPnEy5kGOl03P8qVHjdYpkQgqYAEdHzIdELXCUTqDVpJasBCdhvm5RN3EVbzq6yq6ZpUx+AjodAlsDPf5n97CnWQg49TigpeEke0gIsC0uIOtmemyJrkBTqm+26njydRhfazzuTNdW6h0UXzfu9l65hMHJ9JvZ9ebBE4Ytl8laZGV0sHUI6sezxox2d16O1fQg7p0hS1vQZmlKtK51Tr1tJOJBhZ77UokFwLjhL6GDL9zizcphTDtK1YvEsMDMYufMFywYC3l/8QCJHRvJBOejFR41w9DoghOK8QCKgmDHTIHCaok9d6uEZQEkydFI8IgdfwQhLEn1WXceCEXhhlkT0CiNTER7RYHN6fgoYVu5790DWipO6sGyxboqodB2g6cNJsNLAVtnBYNYGhsjIZYpr2RRA1Cm87MLnQJJ1OnVnS5Lpob/qg9UYWFEtJLxw24gBfw6u8IcKoEx4Kyhp8aflMCw1qI3X53oZ98BBqNLUUKKIKGzzuuUfybdBp7Yc3Spfcr3tMY5TH4DVh0YN5yGNSdJJrqEIL4aDwAprS4MNRibwSn6pYkEyeDAOngDrE4FOt9bJBz5aoxL9SmtTWeZKWUxYRWGrOOj6Ti0hrAatdAJh1nUPHjpgrxX5sRCe6ljsH9I2IhTRg8ImqWhFyHxwEDRpYTmA3oejF6dUckk8VoqvN6BOrz6qBXJlDMsKKdWz/fZmKZK6BCTq4pWhjjd8yyb1si7wVYGkc4Ep+9QHILoxaYkfBOKIqY+kEbPmCGQAXQakPWaRpnuwjQUhFvmFUNzby0+fMRUH2dtlbzY0u1+jWHEtMiJ6nEa9tLe1AJ172ZgvdxsCbdU5XRtBTNWnPwAzfLWp6DigTEx2jKQlOUmDskh2FApNiqEHk5q4FBGMIVEhLP77Urf8bvBp1XOc/3bcdR93PfpC9MuLCEWEGOjG6lsVqSeDXeLCGBgfDpT1TAXm6TqXuQ577TGPhD5mny9zqLt7DYi9EHKasEhq81mWyaJ7AqMixKJ7usY0G1/Yv3nnn+kR2sItL7hm/qZr3jm3fs09cxvW/rv5G6953/yGq18+f+3lU/82/ghTav7Ga8+f27DmHyxsWPc74HuY+99Dv+eym19w7SP57t07+xEul/7OlkdYU6zUpELIsz8eLqUsrx1CjwCV+naY5wIct2525SGw1z/6scI/evPDlodajtnRZZ9H58k6+swRlsymFlbWJAzPGiS/mcnNCiwrddPIsssx7y2mgK/sGze2S295wW6KfzCXl34ju/FzI+J7MHymsvteEvg5zV2wf37DmsVLbrj6R5CfkH7ZTc//IebcE92h/S3j57vsLg/FMxXxPdDPHo+Xfp3DcPDSm5//Rf3mtQ99O7777k4zo05izdRo6KCQW1IrOnxxSnbWTNQnvMTLcq2UL3Cjc9NkPBnPAPXZk+xSQyOPrNvSwHsBpO1E/V5WuMM6AZuAyr4UCJBzNpZmZ0Z3w31Zv3T91QvzN65748Lu//Klbrw0F9H88+eIKUP4R4REpzqE0IjCXRwx/pX5DWv/kI1bI5VWx9ji0puuXrtw07r/2uX4bRFxCUsaAU0wEhNGKHiql5iTnJbHy+fOv+/ggfmbr/5N54z8yM4K8wOZ3XIJQ46wAuQsDnChxNK0giIh1WAVYOYvFaSC94ZIPkuclO8BRB5jBvcMGIgA04dVIBjEprwW61SDjCIChCJkQ5YdB3dfsv0uuJX+9ddfNTfO5X+hrntRp1glfOShtUJBKwJZAuHnCHQlznwquWy7dMNVL5u/cc1T9Cjb3IZr/8rchnUv6zK3ZUcMKeSAjWJHSDJ47LEsC8ZA30ZN43x+p/HtR/9XvXvnv/OVkg5weYNSCknhAVo0kD8xhULu5E5PzkEWdpEChV36ay3VRVIITd2mdl7NQmPEy1MHSQJOMOELAoJuMTsry4LkVeCx50QLO2KRam/VRnU63OLQKN6i1q5VBLmy9BTmGCQAWzcVyMQfhBJh9E0togGd2i+F2uaFDdc8S4/QFm58wXNCh7Zwo/4lTENMmwpVVomkej9b1i6gQxbYRISMuB4iI14wXjX7FgmJhrZxYxcRnxTnRMJWNKNgoMMpwkSaLNossRS8VICOLpp1CoItn5Qfg1xabn0kIlGudIqhI1vlaRHgk82XlqgTa9CkoxMSKsZFPvoZHdHmb1r34aZ4TokaVBEM5aP+QppsfIQiyEOBgbuxeYUb1lfEqPuFhZc9/zusfSiYv2XNd0pL/xSPZ6b4qb2M2GwYk6kgjBhDEaI5PnozxUsDUvjgtHj2/IZ1/1VHtli6ki3LEjGuXBzQJav1hMLM4QEp8zCqNKWAwynVxcxJ+THooNSxpZVDyjUgIxX0+XHrUt8SZANjuWgTA+Tw9KBe+tydd99vieGyW66d51b6zVIorKRS6RgAJPOkKlJiESpelpQSlkRQIWoiS5+/UbfcfWceWLriIf9xio2Xz+Sh+H7c/bbRcHQQZecoAPN6GtHgZIAU4pV1Js4GyxV+kWHmNy68bM2lJWNY3Pyu+4QKu0mI3p8ZLa/bX0iYiHDkkJAGDS3VO4DQMD/PzSfhq+BDh3Kc3CvJYciHxcqNBEFeA9lXN12LKWOJpKuAVdxekRntP+uINl5eepNC53XB9SKmiBBdFRDvhPFMGUhqk4w7wYqDKUxwwhyd79SliAi1+OfzC8v/v45q8/dd9CMx0i8SM+wIJgZj9IZcaGxIigiDICV0jJ5KkxaB0IAgbBBxXndIb4Rd6Zn6zGBiC/yT2FH6mEgImyIEpAAAEABJREFU7FObGEKiiwFIyxRyHEUNm1YtB6Kpep27aTzPme3Y8YiauR8r9WA0fEXMSDQq0KThx5WgHHda7pZeMRH3T9DdhSnZQiEVlC1UhCU63GCxRTOIvCpkhwWkikEiiIAej+9Upi0GBxQttwok6xUCFasQrTzBwg1w5c1legR6HIExMsayYIbo/bXA8wd3M0zds93WGxTDebNZyu6OLhwl8uwFmrQoIhQRUAnQgwtkuQuoqbpLNZXjgaXGUntXE0M6ErmZ7gEmWIjgjGE1afCcCdaLDtnM8uizoOrdSNem4q8LGwl/GyYUfHgyTVqgNY1yRW46LATSM4PV2yHuJOiYmV+/7uc1NGg+ZeSojHEPLMQmVEiwmPcw9E4BMoDoUWrhK4WGNpkc7/j2jOWrBjkW4w/1tiwfrv/b/t6vRr/llbEDJhYwVgAEO8wjlryiIqYapj4AT+DnYJJJkQ6YUfKQZnqpehJGfWMrkXkUp15Kk8FXK5JipltZyXicFyv1hAgM2PxQYCAc2BIOPCKBLKgrUrIeW/XNlfesWMsqQ7qoxJPEtxcMLX9QQ+uiu8I2zDlIQBWSAfJoXSNOEs8QKFsLcgNsS5DKj7eeITlQnsNNzv8MTlngfvi7WydJspPsk3gRnbCRmIOBjjZVzcguonhiyvByTsYfhDxwkM+7ybumUhEh0Z0Tq1XljZyqIEYxjFiWNIIFWZx48AbNQ1qnI5vlgROyRrCIgJKitU8T4AHHrYOfibC6ApMI4kqKeokGbxso+9TGFE2JO4yk5gdC5KGIyBZhtQ+Q1yEUQhJOE6yaVFrR8wacBr4wSM5vKA6g/ETpFREEM2QExzxNIuk7mVcPS8kRphRmVabB9KmwNFU4sdNAR0ODc9DyZHwRFKtnO0oBkIizkht0UHTIrJQh0CGCOCxBVItTbxPRWuNrUpx1uBVHKVl0WkpYbv+fUmgP0lfD/kfidEEkq6GFThEhN9wkyIgwKpgMiERbffGNa79hbu7gU/B9Qs0BgZxlwYWp6F0sd0BvDCqzZdTTqa77fc7Aq5EvtsiPi5w41LBY0ZkvxRK10mYlbyD+dOYINAaQu0nPZwzYZrL5VjuNOqAoOsXUd3HHmtqZe1pU5kEWdK82HNGJG0xjYBRhjQFu0NWCLEIXwT2vNUfBQIoGnysRKSEyeqf8Xhb+dZn6do3aDuq8luL/KbGwRsrdBD2WhHJsuZkgSa5BcxWMQPg+iS/t/4YU36OmCz2baIE5Heore0QoCFW2/RR/CLuGO8d29vfbUuP5TnouOWApbAHSwp49Y00a2gznVv33DDGIjFgErqng5W4ZvoUqIFSPk2UnnGw2Sr6U05StTemnnJkNiWWTB50w/RhQhio02adTtKzP3BRAh48YLFP3j2NmCWn1mdnZbPar4iWypDAg4dDinGixJsfjW7uu25+H8rul7vsyuz9PGhExli0Z6AjYYPYpo4SECDgFv6G39kQwm59ckqnQ0AIqB7pQoAsoQrPDqL+kLp+ltuqZofHnouteQar85hCrpYouCXu6okmmKZUmbXmcZLMc1qOrqbLGsmAWpJCI6DKTHnzXEC2lgAaJ1rqDS54E8tj71I6xvJQstSMTZk1FhAKqOouJ6Dlu1bV5iFBZluLqk7CGEo04Ef4vHKGrzzww/lWc/qCYIU7RDI6gxFk6r7X2e5T8H8622U/t3fqOi5TxusxuP76uoZQ40ANzA/KiVGM+uDzuPjEKfRwdzxVkmiGh09CqOMRIt85PddqL6rWLW3Y+aaa1/xkxvj1Ho99Ti/MiuMWEIiMkutzSMQkg/bexYrtFhpgddcRejjJMsQ6ZNG930coLbJ4oMubQsQQ0wdJc0ILuwMwTDl88uBxTJ49jsv8yY1KpHkFGqjQl0wCKnpZ1/X6Qtqqh7K1TmCLK81gLd2RI+mf+5bY/4z30/lotCkSSw/TGioCJxkhX/PRydu++ZP26p+/duvPvobyZd4K7vWdYMbG7oZNbMrAvhNYXZ2LVhx/4ot7PQfk8YrF9kNhKhCFb5sYeQVp1N287N3oO5vqucdN7Msd/25ZomSrwCTtZBECKhkjq7tu/6e0fhaueS36/i1kCS+iThE2kaCwpTBhg3Yt0+ra1AIgIRYQYUodmygTxMffjOgDMFsFAnapwxcCTlFxhhJINUMSwyF6goXEM0HWZszmq98VBXu4fJO4yMapOYIRdhS2jPm4owvBXKOkb5m5Y8/TFzTt/Q0v5UmX3BgpbvkkgRXlVjKJajBc33/2lL755+34ORP1E2xe+alkDdvjj3OkNSczF27e93XPwiELs/BY0QeyKTAxSTJENbkwD14/pW8cnS3jk0PEuZz499JbKnvHoeNaUyAJmoSt49aEttIVmu27ym0zxxzRMfQC6WGohTxxyTpq0lYyHRTlbZBmeKtXb4tMTNgpubZ0OrTwCyG35QPvnEXkAA/aFfbAQINSkTkSuOAwuVzxVTW+fv/Hay/a+adcXu9nlf4jhryfBwdxQiMT0Iig8DMGGEW+HlYgk671l7CwTkHb7tbG+9HLHnLv+mssU2pZiLnY6WkQwqdyIYHcQUbFIC5Wj1IOzB5ZeWdzKsERotg2b3l6+wzCofJnDHcbdRsaokFZaOBlb0kOvn2b0rkzjhw/PO4zJUtwhqSscVfDFDhL5qm9BmaLM+sRFO7wwmKauKxfo6p+/a8fnNbPqw6I0QaDeGypEs28gBVfUQAareLLy0J9d+BPrLtx/+7u/wHPBiyLb71iL5UoPTGM0epWdgFQXm8WFikHVM5WkAyjet7h5+4s+d+d77/e/7as2/t+4PjmGlpwceLojOlIIRmHEEASMmdGn7/uVdy/qyNaNrEWNAXMlQIHwY5VoEnEBPoRidFop06jhQxEBlhhTx9GmPgCHDh0YU7P+1kkCEaRiPKTTI2QUKcIL65xsAWZestInpQxDXZuZsfxIWLz9ty6nOL8PpAtSThhEEJeuxgDkEDUCPiJmDnQfm79x3V/HNBe37vDPye+m2hylpJIA4+Lrt/0m+ur7tu7cght3Cc+SghaR3rWv99X8+jXfyXvUH+OGuGEE8l2iEkpiGAIOTBfevK3B60O7b9/2f+uo1s2En3cI4qyENduAXy2S6MyjsFY05DJtDCsU3HmM4DxnG2nVGAtN1Zh5Kj+NZttyKg6wyj7lGh0rSA4QMMjYQNbkZK2HxCmKZKQXKV0/4KNQvAyTMadlkFc0aKSM8gEzpjCKiILWLlWXb754w1XPsGrxY/evY9Y3ya7kFG3kf2c3rSsgtRbBFznJISnJm/buX42PVDFSv4p0QQoag4gWEl2HG74wJWMnwd044icRfUWPrnsxuVgeipDoHowKkpE8+zWbJkGQ3JIBSNtARupQO5BjyKn61AdgaWnpQd4u73dN+5nJysQkUVaY/cqolhU9pFHiZcKLt01Q98wftepoGJ33xD/hSeu1wqQPFFppxKDWsBCM7hFBRBcsvn0m2i9ftn7dN+mee5Zbtteh91V86GB3gHhwR/SDufTLkcFHs/wDtfZPdffd44Vb1v2lUbQtGfp2oka0kOjOg2l0dHMW5DPpv7zq3PN5CzvaCu/sXkrMqHhWUw+kpqgaCJ4gRXNbsqDUVK2nGXsBkhzvX+4aH2NLeMzD1AfgC3/h4BcUcd/hRKBInCuPg9tVIpMiuTC1f0hDvKxgZrZJJr1ScNPGy7/ibWD3L73lS3v2rvpp5fjXCMyKax5wRe39FUQ+3K2huJGK7+46+a1Au7du/yhZ/RqF/3/v3/LO/mOfDjfL+Kh/LVftjr2btvN1LrolrWM9/V8QkSCTSpO5UkPz3ABr58omfIl/fe8Vq37KuRd35OA1RqwS8VbE0LjDhvzy54OIgGcSupD23TIDQvTk43Oy7/Pf9Pk/15SNbZjSc+M9y9wBDkWfmSKCQGwpKBTq4EiwRgb2GKltAg7M7iCDdu9lccmei37D7FcAV+PeLbteRNidmWPCUgC8vfq+cEd4oCK8tRIEP/K+fW7DuqeJc7Nv685fIM4u08DRPfe+YdeufVt2+p+9z7mb1zy9U76mwrXmdBW8OITll6YLzGYNlUto597NO16kH7p7bOHRMLd44aaIQGwAlSsYGQsjfC/oY2FD7y8eE9ixMo/mIkJ8iXRQG++pZzFN0aY/AF82WQyJD8mTpAPH5HqAx6D3wMQbZwYvxAjMAK3LZ4O8NtBRndO2uGnH85H+S8LZqaIjRmQWxIb0t0xBET0pHdEi8z/M3/IC//cDejRt4ebn/0Abx/srSGtMJ1FrSQRT34iuFbaUoaZ4Y+XYJ6WHaGjyhVkKtrsIBna74kFGMEfhMuLYguEp1IQAW4yQrrrUSjTV0KbyOtIpKTJP886b1HvNULRiBoUPA58aWEeWmOVTWHv0vERtRnHO/Ia1P62v1jC5cGbp7xDyVinv4yAlt2isJzHAdAT0JCJICvHBQOPln2Dy0CO1jRsbvzO8LCNmI0L1ysALoBNVQl4gt8yIuD9a3PakVYduQZ6WPhTMb1jzU5E6hzB9L6PQyqGNXhzsSgVhQKLk5V7mDIk80346zu0Xh5aA0/aOD8bZoosIUVyRk6AKmmUOnImuT7YUSlCisSWIbspADP9/By4Xm6Cv0j5x+7sPXjBz6J913fi72fwPUhy6PPURHo5GFZlJhuaS6sqFDVf/PT1Cm7vvI3+XhL8Xs0jW4EzT4SwwQFsWAQHPIfzgTDf+jnO/dMHPOzdED903UuvUFcSaFTlRESNVQ0gc1UII3kfuR9iy5uxjisXE1nVFo9Y6FFN3V2lq52htP2k+6DyCISrbqHiVn5eEzHIvIGzjwllWVgwsiFGosKb0kd/PJtyqh2ku9L6tv/2ZvXfseobazAcxXeTwELVCwELSiaaark/mHEU+uz4VYPFQfeGWq/9ai/yRkP8aidLgFw7JAirc4GQ2u25Pa/GhvVt2PuPezTv/96fuuuvAoH5ItLBn3a1s1hH/CjqzDJbOMeIw7x09zB02SgUvEYbcLM78Aunda3JaGCJN5758aPRmKT9MEvQgCJBIVr4kkSIoYVVMNJQeLcsU1oKUTEhqIUU1fZu/0tWjaHs3bXuGxqPvoWi71I33KDsuJq4U5py4h6JIbJ69LP3th/y/klx//Wwu5wtSemqGc5Yier/IgNbQYjcT7PKcfMnDT9GD+GHQ/I1/6zJCfFsqsCI21YJQRABQCdADbPB9PZNsBzsFNR300EnrBZkfOf/BC9kDlFP24zoA/jv+UBwUm9ln5DHFuhCFGXAekRoyGRDZCCTjI0wiSs/D3tI/esiNss9RsHjH2z++anl8XXS6iZr5Wz/eVoegjueQgDt3or9/wegz5x8VQk8af+6J6P5B5YMPD469CU7cOQRKRfwe8ptWjcfXec7e4OHHp3GwWqz+afJ6Pltf+ysRja5Jm+xCICwLpsImDCGPBXKzCoxptojlTz3CnTrs5R4AABAASURBVAfTh+2TqR/W6OGUfKeOurIWWWrSwpHJko6IVTDWiTD2geGSSOg6zeXIVYuArp7NF1+kz52rR9nuvfMdD+y5Y9c2fn25Xi2vkviOwsH5IkDVyIGkUnH+qljl/2SrpJNh9erxdqke/DBUNRNBnjxCfI7b/ZpR6kf2bN6+zXOVwaMY/gdr6LL7UVGIPMLeqXF1yHLPA6FJYz7JwgHKlhN0WEZWQZvhcULH17xNxxVh+f6DL47QAUDBCoMsEwaSuB4D3CnCmCOA0UAhtx4Zi4sMBRL3jAhFnDcaHdr7cA+Etj0a9r5+172Lm3a+ix9xviFSr22dlrjyMjD0EA2q666UH8o0tI0bkXZ/M5k2UUfggQq0FKN43e7Xb5u77/Zt7/zspm2fRvzo+7XXjkajpb3JocOJyP1IXAh3ROn1G3cIUsELQs6jyJQq5+jtEiFkUOwDD+w98P/pONtxH4B9b/7teznhY38/A+4T9xVezwFOmpSDgiJLkg1WlvDWiMVoaBloAyl23GbF/QBttrnPfviPF/hKdjA7FpR7tuz4yd1bdpzDFfT+zO6LhLd/uKALu69+hRnD/H0feV0yr5iVnuq6B7k637977q89gfd5PhUgteExgHOen1/6KBvF4cKR+DV/Uot+rxEyI3JHT1mLzgxkFI9JANVDvEVBZQ+dxl982zv2wRxXP+4DwOyu3VvTicN480BSqFohFq3adBY82E14GzlA1YG1hQJRKCLATdH0LRrrV77uxqu/FcGxd2q6uLjq+9RG/5ipf4+NldNhY64hmCeJiO4KaPnhS+Pu/S1i4+Li7BXcfbxVpTqW4ZIbyXWsuxTkriawWFqBaoSLnmJyTdqRdXCeNg07lwE+A53GLX4VcQLH1cnuuPzLeXzgCz8TfH46nCxiUksnWmRKwx0hAiuu9kAewe70q/RYII/o5V2KCBEY0/9nrHzj3PXXfB30sXe+Subn39sJ+VLif4APClLXnX/RzWufeun6q/lsHhc5VQ7xB3PcXnrfpu31Y9CxTyQ5x1HoLmL5l0jy597G8h0rPBRdA1NihSzr5FmWCq9dibTv/QnM/jxwlYR4hZQPjr/6F2a966MaT8gB+Pxd93w+RoRiP8mRZEnY0/NRxkshXylCfrn4iJXwonm9luPqawUJHSdHAKkgNSLu32gz+V/QTt33btr+p+PRoR+Q4n92GV8/07WXdKOOO0HMK9pnxuMv/cDeN2z/Ux1Hi1F+pOu6p6egKk7U6CE9GEysAARdVEfVJvZZa2er6SHuSoqIgpnZmfRfKOkENHbtBEQhRC6Nnw6qTpokCknCjCwgFSbYxSJKzgLNI4gBQ9ai07YFpoCGd9S1sTC/Ye1ufqj5egwRltExDfWXQlt2PEUzjeeC8TkcwBlCf2hx0/a/6L/8OaZgE2Me9i5+yZVPnlu/bg/XO4cphtwa7zRiWQMLxWosEEVRKeVmfaLlMqAWfiuQOcKQH0sdaoVOXEHL426l1jrO1o7Tf8V9ZmlmP4l/0Asjb9LXCvRXO4tgnfRenr3e9pAyZqXgoddiU45lSYQ9FYqYi2W9a379uh/j9r1g3TQQOXNdazPvH2dwEA5yF5gmiuQcFuYP3dBWrXoPm39JTMJUvqwZPoHqrMlnuWiGFNbsMCMUm08BIkLRmvqaVVUYiIMvLoL6g5ku95s+EXDCDsBn37jtf5H6r4WzGpI1KS8tVa10UCyCkXXVGIoIKBcAROcgCSGd9AZfy0ziG9nad6jpznF2d1x8/dqXaIq2uPnu+/Zs2vaWfVt2vHWx/tGGYw9y6c3rrs/W3ZGKf8EKvjVoh6MgTXMMrgdocsWXWeBhtcD0QsjKtB/6ApVfb2CxUm895o+jNc9DD1T4oRVTSH1z2sYt6r32rQ1z8mQsLwxhseZ7QsHLRRlYuMBKYPWNqyMROZarEXzVp4k2IJrWtlG+Zm79mn87v+F5j/rnXh1nu+zGa65YuHHde8fj/IVOsYb8WyrCKSVjHz4kupcrt0gvwRQiaFOgI00ssrvfEiOGC2IwsE7q3tOyfcW/otbrphtP5AGQf6DJjE9xCMbB6lvd70JiMZFguYVZiCNwcSyPb+0CejBQukAG/HsZ6UJHYDVAqF2I7vu6nLln4aarv3jJzVf91bkfW/PEp9xy5WqdoPZNL778HMe85CVXf+ulN13zwFjj9/KdxxXMeyFp0EUjJ8ZKWtCdGQMLAIVlBeLMD1xInIZBCm3K0QzlxmAbg3LMh4U/2711+x5bnihoJyrQJA6/0N0Q0T4tkiZ9IxbZifdHaIQYJvdvX9W1wfDuRaM2lh0tnADC5HDYJ5JY5gECSy0ERLQI9Oe2cfuoVsfe+8er3jZ/w5rnLtyw5tlfd9M1zxz+3CwmIR8Gh/+Tcf8BycL1Vz1n/oa/9dwHnnDBb2hV7BvNjv+o65ZXM3WICaWo/Xa66bxCNA9IAujIMLBhQfhgDY/YtUgEBXi4IwbxBodcXCz0sheKgGqj9mnXFqMT2k/4ASC7bDMzrw3Wyo7AugdLMGY1IJeEulC8nkdET2wCTDeiEAlpACkiFCaGsUjT2IUxemyjCheaIfhaNb2TX0zendntuGT3k352bsNVG3m7eMXCjWteMXfD2lvnNhiuKrywfl0vx+aSuYOviuXxDnzfpTb7TmL+IPs9yqBc0Zguavoamb82ifn79ZLFoMWPqz3JDstgc4FSITEOMMeWVJNqWQJAIobHHtY9mQNb/1GrtRadMGBFJyzWSqD7bn/76/lq+Ge8CmfsBVjJOox6oGBeaOlLwrGgQL46epYlF9FHcTm6wTgGeWHiVFx0kNYQhbrLpQVaNC7EC1rEyyPaP1HErcS5VaFb8QfiVpxu7Vre2mVAxz9G/lOp7iK11hQRaVAfE6RJS++8sK7OkAZrSaZ04EBGV+lCZoW4t3IEy8JsL7YBbAQDUq+NWv7E7tdvux32hPd2wiMOAbsYv5W7NlyyaC/U2JsJeHGsLBRyXWQ+pOCSlVt6AAZcB6joPk75oHYvMb5EhTUxASkCGoOMCEUzSC1C0PSWoVZGEZZJgy5hkWsCnAAFL/cMxJIiIEQD0dWxnk4cNTPy4IkBTPrcTDt/BGHaGCgS+76XJ1JcSlF8rMrfKtljMLTHIGaF9ANhC/1AKBb7XS6xvKLoT0YVbVIL0friIgmY6kMRYpJmKAJADBKMQjSKH8FhAlM5X6qKsCbB6Cc9VTpVs74ARwFdZIeBEgYWfx8851SA3Dz3aygCJOAO9rTcJ/BDAO8cZCfHQKTSeC4NzXQPQZHKftD4iPR5oE8twj9nL79wDuoTjiaVPeGBHXDPlp2/w1XlH0W6oAgsxmJpKAxI1foKKrwBqbDMQ0SN6lEUTpRZApetOClEywGZYSZi0uWLUur5HmNKR8JoCcgueBfKgELuXEyBAxP3wjWYI0KCzRvwE/YRMEWjx5dTTjBVi7AOJ7pJuNJhWXrE8B6BrjuI/vZ9rmFpH5vhMT0ApJzZdW9TxMdZmcIv1iavHqWvJiMD15yqbkpxD1hRhZVHgHW2laLsOhc55fB4gulpHXPQS1YHAbksCJumB8C4B8cVOsdGIpti0HcCWCbrIUCVH08IiMwR3A6QqIVQ1Urm7S0pIgxKRlhEhEVmInAx9CyHJhXxiRjrbYME9Nj0x/oAaHHzjo9046VneVFJU7AQVh4QwzMWFDJ6ALVj4Ald5cN+IrdxsQx0bjBYJgXFxzaub0/aUzYHbDCAVAcn+dhmew0Otg6fQMLRtdJg0hPZuOvnIVKpk8Nnv2LQ26xsy6AJV8Cj/WxZijKPQWMfCybaCI4g7yddzj53z507vvLfFbDxCYR2AmN91VB+Hljcumu2KT/HpUMVUqyTkqk2Q24Uv4oXLhYCDNLZ5cBbhEfChwcAkz4ccluZx0wOHkEgGXAorL7hR1eECy3ZwmCCFCQIe4gW0KAaYxDiZlEvCydoNjwMMmcCfJlD9DryjAgrofqAFQKRA0QEdrl/39ads/u23v0Zyx5rmKzgsZ7H8bvlLp6p7P7YF5+8C0MZ+lKkIsJ2PSTIgE2fJNcIO1QWtjOBPiJ6P3SY4iSxtX14KKEXLSIoPIQ7JF3BixBK66ADXR1ChMadE4UW+lAD2UI0ZkCWZq2XBxhkUqjQIKpllp7p7TDIFfAGCJAiGFMfHUfzV9q20uPR2uMxyWSO/Xfs/BjfaL2EK/iPsr9/okoFLwGmRCHoZuvuEEGxFZIBlJo05OapMF2YiT0aSi2FBNiagzNITVkqjBOQjURzgAmyHPtCyKoTxr4F0CU7crCMGJNwInAE+REHUhExgKrFMPomQS3goLz5GS/dt3n7nyB43PrjegBYVe7etPMPxooXUpv+7cDFg3FxXbJJcbAVVeNKTllmgBksVa1kRWWNKBVh6QQQw1ubkw1CRUfx5d3z14mz2D7Yez6uUySOgJcRXN9hbNMzUqmROQm5JaIATAPElGGizz6yD0B04/08XvzQ/i3bPoAlGsbHqT/eB8DLSu4Ef8wzwTz1yKwKyBevqkAI6ZSJLeEWHBHIKRbIRFMoIlQfn+UGr1af9qpyyRjYg6Fkhb/xgWU/kUBwvQkGcEdW8VqJIB0UBUHMWK0Qz2VSiJlAlgEkqQxVC5SEZoQNwL1sPHC0QdanY1rnJBB0md2erbsu5cr/GGKsGB/H3h7HuY6eKsfdqm9sqT+h8od6ZVYBk8K4huHPWShg2ZCUlYmCLpmR+hGBz5FoWDHSkTHKBl0dJEn1xEUo0SJEX7noa04ENRfqxgnzHils78MoRbCRGniw0PUSM6mGXgjLz7iFouZ0VgbZWUQz8SBz/FFq9TfCdMBJ6SfzAPDz8d2fmRl3z+cLoF9g9YsunDcCmk7xGHu+L56LHRFIqSMiugTbFxRCfet9etpj1CaYKg8TwBF07XrKESZQopprkJDc4bjZ+9sI0vObRNh3bO3FTvf8yoixhZmL/Lj7s4cOHrrqqz3tr7g8xsRJPQBe2713vuNPuAW+krvAdXLBXeWqUw2IGhDqX42dp1NtmwUBJlj2haf2jJJ1wegoIH1ZCzgUhFEETHUGy0qVgiuK2Qrb1nP1vBRhiwFSfWNy36HSA7SFPhzGBqyT36aS4Yf33bHzNZ9/47s+bfnJBCp6MqdfmTv52vi93Wx8A+/ZL0GaEVzvVdgaJKpnqPdiCNScGcRFgHV0s4O4xQ/YdhoabwkihlZa//6/IkrmHjZQJYxhZPuHdBIc6ltElN4XdyCKqBFq6P3Jkbrxj3ezevK+TTt+Bw0RGE9yP1UOQJVh72u3fXbxjp2/MpoZvYwt+CQwdi2jygtHyZLNEZV2TZGUn9V1pVlvSWEGb6JXCGl7q8IDDo4L6jkLAcyKtzyYJwIhEqNYeRs5LFMpbOCMwPReS6TqHnJMnp9so9FNi1vfcZfXiNkp012eUyaZSSL+e4Ldm3d8CwV+U3TdO7mM2Q6KSXVdc/bGcUUiAAADQUlEQVQfUxgZXHxjwEoD2r4jy1SJ+kE9g4/lCRbQdYyHOxsGY2WKCDVdcmsKUS4LiJXCD01gUYAMkrsSgTltmZ1/XnynWrxpccuuv7zn9rdvweWU66zolMtpJaE9m3bcMNNGL6aqt0SLD4RrTtFdaNebUyFB8DRtBKSwUbXEmL0oGqnlER7Vc8HSexYBBPYQONFN27agpINPgs0HGBj0eIiWpGZApw9k5i2ryH0va0B3ynaqcMrmVol9ZtP2fXs279zcMl5IUZ+mrtuq7Ch050JjkwVsB9hbYV6DThYMw8QiVMo6HNCYB6BqHePAWD+QwiENmOvwppMDGTGKxl2DrzTilQo9bWZ29oX7tu7a4txRndL9lD8Ak+p9dtO2T/uXxT1bdt24uGXXqMXsWq64TyjT/0jiofSDXWINeJ/EQJdx+laR/U7VQ2SgATCVMLBaQ0NcVJrAzNh2bHAvN5MO1h0EPZDZfTyzrduzecfsni3bf9Y53vu6u/9XGX8NDF8zB+DoWu7e/PZ3LG7Z8ZcXN+98Yozjcin+NXeH9/Ldy/sk/S6H49NqjW+dW3qP063jK6EOTZdcrYYuJQCdELsrQ4qWEYFCXXQ6iOCTavG7TfE+pO/N7H675ei7927Z+aR9W3b+1b1btu1SBWA8zv54u7fHe8LHYL7cvWXbf1rcvP3Kxa27nsOV+OzFc2avjNANLfVK8Ks6jX9W2d2m0G3s023Z8jau6Nv49vDnlPlzGgPSq6BvY3NvE7bj8fhV5PqqiHhFjPXji3/+uefu2bT9WYtbdzxn75Zda3dv3f5H6DlAjF/D/XQ4AEeXP/XLdz/IQfg3uzdtu23P67dt3L951yv33vGOV3DF9rBp5yv2bAG27rp1r+FOMHzR5qH3b8Vn845X7tm87TWLd2z7Xd11z8P+K2BHJ/G1wp+OB+BrpfanRJ5nD8ApsQ0nL4mzB+Dk1f6UmPnsATgltuHkJXH2AJy82p8SM58KB4AP3qdELU5qEidr8lPhAHzNf5Y+WZt3IuY9FQ7AiVjH2RhTVuDsAZiycKeL29kDcLrs5JTrOHsApizc6eJ29gCcLjs55TrOHoApC3e6uJ09ACd5J0/29P8HAAD//8AjYWIAAAAGSURBVAMAkGlqSzI4YVAAAAAASUVORK5CYII=
 Outputs:
   UserPoolId:
     Description: COGNITO_USER_POOL_ID for the API Lambda

@@ -138,6 +138,15 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 - 템플릿 검사: `cfn-lint 1.59.0`으로 `storage.yaml`·`api.yaml` 통과. cfn-guard는 이번에 실행하지 않았다.
 - AWS 가격 도구 MCP는 `aws login` 자격 증명에 필요한 `botocore[crt]`가 없어 실패했고, 단가는 `aws pricing get-products`(us-east-1 엔드포인트)로 조회했다([설계 3절](aws-stage3-design.md#3-비용-ap-southeast-2)).
 
+## 로그인 화면 브랜딩 (#57)
+
+Cognito managed login(로그인·회원가입 화면)은 `auth.yaml`의 `Branding`(`AWS::Cognito::ManagedLoginBranding`)으로 엄살 브랜드를 적용한다. 기준은 umsal-pwa `docs/brand-identity.md`(UMSAL Forest, 메인 `#176B50`)다.
+
+- 설정: Cognito 기본값(`describe-managed-login-branding-by-client --return-merged-resources`)에서 라이트 모드 색만 브랜드 팔레트로 바꿨다. 주요 버튼·링크·포커스는 Forest Green, 누름은 Pressed Green, 글자는 Ink·Muted, 페이지 배경은 Canvas(기본 배경 그림 끔). 라이트 모드 고정(PWA 라이트 전용), 모서리는 폼 16·버튼 12·입력 10.
+- 로고: [infra/aws/branding/logo-symbol.png](../infra/aws/branding/logo-symbol.png)(umsal-pwa `apps/web/public/brand/logo-symbol.png`, 128px, 13,232바이트)를 폼 상단에 표시한다. 템플릿에는 base64로 들어가며 `tests/test_auth_branding.py`가 저장소 파일과 같은지, 라이트 모드에 AWS 기본 파란색이 남지 않았는지 확인한다.
+- 템플릿이 51,200바이트를 넘으면 `aws cloudformation deploy`에 `--s3-bucket`이 필요하다(테스트로 한도 안을 확인).
+- 시연 주소에 `lang=ko`를 붙이면 화면 문구가 한국어로 나온다(managed login 지원 언어).
+
 ## 다음 단계
 
 - 업로드·작업·결과 API(항목 키 설계, S3 CORS·presigned URL, API의 항목·버킷 권한): MVP 범위(D8) 결정 뒤
