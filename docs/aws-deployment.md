@@ -14,7 +14,7 @@ flowchart LR
 | 스택 | 템플릿 | 자원 |
 |---|---|---|
 | `umsal-backend-bootstrap` | [infra/aws/bootstrap.yaml](../infra/aws/bootstrap.yaml) | Lambda zip용 비공개 S3 버킷(암호화·HTTPS 강제·이전 버전 7일 만료, `Retain`) |
-| `umsal-backend-api` | [infra/aws/api.yaml](../infra/aws/api.yaml) | HTTP API, Lambda, 실행 역할(자기 로그 쓰기만), 로그 그룹 2개, Errors 경보(알림 구독 없음) |
+| `umsal-backend-api` | [infra/aws/api.yaml](../infra/aws/api.yaml) | HTTP API, Lambda, 실행 역할(1단계: 자기 로그 쓰기만. 2단계: VPC ENI 관리와 앱 DB 사용자 하나에 대한 `rds-db:connect` 추가), 로그 그룹 2개, Errors 경보(알림 구독 없음) |
 
 - 프로젝트 계정, 선택 리전 `ap-southeast-2`. umsal-pwa 스택(`umsal-pwa-demo*`, `umsal-demo-storage`)과 그 CloudFront는 건드리지 않는다.
 - 직접 API 주소는 네트워크 제한 없이 열려 있다. 2단계부터 health를 뺀 업무 경로는 Cognito access token이 필요하다(D3). CloudFront `/api/*` 연결 방식은 아직 umsal-pwa와 정해야 한다.
@@ -67,7 +67,7 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 |---|---|
 | S3 Object Lock·복제·접근 로그 | artifact 버킷에 과하다. 다른 리전 복제는 AGENTS의 AWS 규칙(new AWS experience: cross-Region 복제 금지)에 어긋난다 |
 | S3 HTTPS 전용·공개 ACL 금지 | 거부 정책과 공개 차단 4개 설정이 이미 있다. 규칙이 기대하는 정책 형식과 달라 걸린 것으로 본다 |
-| IAM inline policy | 권한이 자기 로그 쓰기뿐이고 umsal-pwa와 같은 방식이라 유지한다. 데이터 저장소 권한을 추가할 때 다시 검토한다 |
+| IAM inline policy | 1단계 판단: 권한이 자기 로그 쓰기뿐이고 umsal-pwa와 같은 방식이라 유지한다. 2단계에서 추가한 VPC ENI·`rds-db:connect`(앱 DB 사용자 하나로 한정)도 같은 inline 방식을 쓴다. DynamoDB·S3 권한을 추가할 때 다시 검토한다 |
 
 ## 비용·중지·삭제
 
@@ -90,10 +90,11 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 
 절차(저장소 루트, `P="--profile ai-x-final --region ap-southeast-2"`):
 
-1. `python infra/aws/build_lambda.py`와 `--kind migrate`로 두 zip을 만들어 artifact 버킷에 올린다.
-2. `python infra/aws/stage2_params.py --api-key lambda/<SHA>.zip --migrate-key lambda/<SHA>-migrate.zip`로 `.local/stage2/*-params.json`을 만든다(Cognito JWKS를 이때 받아 고정).
-3. 각 스택은 `aws cloudformation deploy $P --stack-name … --template-file … --capabilities CAPABILITY_IAM --tags Project=umsal-backend --parameter-overrides file://.local/stage2/<이름>-params.json --no-execute-changeset`으로 change set만 만들고, `describe-change-set`으로 자원 목록을 확인한 뒤 `execute-change-set`한다. 파라미터 파일은 `"Key=Value"` 문자열 목록이라 `deploy --parameter-overrides`용이다. `create-change-set --parameters`에는 쓸 수 없다.
-4. bootstrap 스택은 invoke 직후 삭제한다(Secrets Manager 인터페이스 엔드포인트가 시간당 과금).
+1. 표의 1~3(auth·network·database)을 먼저 만든다. 이 셋은 파라미터 파일 없이 템플릿 기본값을 쓰며, database만 network 출력값(서브넷·DB 보안 그룹)을 `--parameter-overrides`로 넘긴다.
+2. `python infra/aws/build_lambda.py`와 `--kind migrate`로 두 zip을 만들어 artifact 버킷에 올린다.
+3. `python infra/aws/stage2_params.py --api-key lambda/<SHA>.zip --migrate-key lambda/<SHA>-migrate.zip`로 `.local/stage2/{db-bootstrap,jobs,api}-params.json`을 만든다. 1의 세 스택 출력값을 읽으므로 그 뒤에 실행한다(Cognito JWKS를 이때 받아 고정).
+4. 표의 4~7 스택은 `aws cloudformation deploy $P --stack-name … --template-file … --capabilities CAPABILITY_IAM --tags Project=umsal-backend --parameter-overrides file://.local/stage2/<이름>-params.json --no-execute-changeset`으로 change set만 만들고, `describe-change-set`으로 자원 목록을 확인한 뒤 `execute-change-set`한다. 파라미터 파일은 `"Key=Value"` 문자열 목록이라 `deploy --parameter-overrides`용이다. `create-change-set --parameters`에는 쓸 수 없다.
+5. bootstrap 스택은 invoke 직후 삭제한다(Secrets Manager 인터페이스 엔드포인트가 시간당 과금).
 
 모든 템플릿은 생성 전에 `aws cloudformation validate-template`(읽기 전용)과 change set으로 확인한다. cfn-lint와 `validate-template` 모두 서비스 측 오류(#42의 Rules 미지원 함수, #46의 Scheduler 신뢰 조건)를 잡지 못할 수 있다.
 
