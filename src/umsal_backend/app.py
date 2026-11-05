@@ -8,7 +8,7 @@ from fastapi import FastAPI
 
 from umsal_backend import __version__, connections, consents, disconnect, identity, invitations
 from umsal_backend.auth import TokenVerifier
-from umsal_backend.db import database_url, readiness_probes_from_env
+from umsal_backend.db import DatabaseTarget, as_target, database_from_env, readiness_probes_from_env
 from umsal_backend.errors import install_error_handlers
 from umsal_backend.health import DependencyName, Probe, create_health_router
 
@@ -18,7 +18,7 @@ _FROM_ENV = object()
 def create_app(
     readiness_probes: Mapping[DependencyName, Probe] | None | object = _FROM_ENV,
     token_verifier: TokenVerifier | None | object = _FROM_ENV,
-    database: str | None | object = _FROM_ENV,
+    database: str | DatabaseTarget | None | object = _FROM_ENV,
 ) -> FastAPI:
     app = FastAPI(title="UMSAL Backend", version=__version__)
     # User APIs read this through umsal_backend.auth.require_principal. Without
@@ -27,7 +27,7 @@ def create_app(
         TokenVerifier.from_env() if token_verifier is _FROM_ENV else token_verifier
     )
     # User APIs open connections through umsal_backend.db.get_db; None answers 503.
-    app.state.database_url = database_url() if database is _FROM_ENV else database
+    app.state.database = database_from_env() if database is _FROM_ENV else as_target(database)
     install_error_handlers(app)
 
     @app.get("/health", tags=["ops"])

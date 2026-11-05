@@ -14,12 +14,14 @@ from jwt.algorithms import RSAAlgorithm
 
 from umsal_backend.app import create_app
 from umsal_backend.auth import (
+    AuthConfigError,
     CognitoSettings,
     CurrentPrincipal,
     JwksUnavailable,
     KeyNotFound,
     TokenVerifier,
     jwks_key_resolver,
+    static_key_resolver,
 )
 
 POOL = "ap-southeast-2_SYNTHETIC"
@@ -243,6 +245,7 @@ def test_settings_absent_when_incomplete(monkeypatch, pool, clients):
 def test_app_reads_verifier_from_env(monkeypatch):
     monkeypatch.setenv("COGNITO_USER_POOL_ID", POOL)
     monkeypatch.setenv("COGNITO_APP_CLIENT_IDS", CLIENT)
+    monkeypatch.setenv("COGNITO_JWKS_FETCH", "allow")
     assert isinstance(create_app().state.token_verifier, TokenVerifier)
     monkeypatch.delenv("COGNITO_USER_POOL_ID")
     assert create_app().state.token_verifier is None
@@ -359,3 +362,48 @@ def test_non_list_groups_are_ignored():
 def test_unconfigured_auth_is_503_even_without_header():
     response = _client(configured=False).get("/_test/whoami")
     assert response.status_code == 503
+
+
+# --- static JWKS (stage 2, Lambda in the VPC) -----------------------------------------
+
+
+def _jwks_json(*kids: str, use: str = "sig") -> str:
+    keys = [
+        RSAAlgorithm.to_jwk(_KEY.public_key(), as_dict=True) | {"kid": kid, "use": use}
+        for kid in kids
+    ]
+    return json.dumps({"keys": keys})
+
+
+def test_static_jwks_verifies_without_network(monkeypatch):
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", POOL)
+    monkeypatch.setenv("COGNITO_APP_CLIENT_IDS", CLIENT)
+    monkeypatch.setenv("COGNITO_JWKS", _jwks_json("other-kid", KID))
+    with patch("umsal_backend.auth.jwt.PyJWKClient") as fetcher:
+        verifier = TokenVerifier.from_env()
+        assert verifier.verify(_token()).subject == "00000000-0000-4000-8000-000000000001"
+    fetcher.assert_not_called()
+
+
+def test_static_jwks_unknown_kid_is_401():
+    client = _client(TokenVerifier(SETTINGS, static_key_resolver(_jwks_json("other-kid"))))
+    _assert_unauthenticated(_get(client, _token()))
+
+
+def test_missing_jwks_in_configured_pool_fails_at_startup(monkeypatch):
+    monkeypatch.setenv("COGNITO_USER_POOL_ID", POOL)
+    monkeypatch.setenv("COGNITO_APP_CLIENT_IDS", CLIENT)
+    with pytest.raises(AuthConfigError):
+        TokenVerifier.from_env()
+    with pytest.raises(AuthConfigError):
+        create_app()
+
+
+@pytest.mark.parametrize(
+    "document",
+    ["not json", '{"keys": []}', _jwks_json(KID, use="enc")],
+    ids=["not-json", "empty", "encryption-only"],
+)
+def test_invalid_static_jwks_fails_at_startup(document):
+    with pytest.raises(AuthConfigError):
+        static_key_resolver(document)

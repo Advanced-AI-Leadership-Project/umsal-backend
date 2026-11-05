@@ -120,6 +120,38 @@ def jwks_key_resolver(settings: CognitoSettings) -> KeyResolver:
     return resolve
 
 
+class AuthConfigError(RuntimeError):
+    """Cognito settings are incomplete or invalid; raised at startup, not per request."""
+
+
+def static_key_resolver(jwks_document: str) -> KeyResolver:
+    """Resolve keys from a JWKS document fixed at deploy time (no network at runtime).
+
+    Used in the VPC, where the Lambda cannot reach Cognito. An unknown ``kid`` is a
+    KeyNotFound (401); after a Cognito key rotation the API must be redeployed with the
+    new document (docs/aws-stage2-design.md runbook).
+    """
+    try:
+        key_set = jwt.PyJWKSet.from_json(jwks_document)
+    except _JWKS_FAILURES as exc:
+        raise AuthConfigError("COGNITO_JWKS is not a valid JWKS document.") from exc
+    keys = {
+        key.key_id: key.key
+        for key in key_set.keys
+        if key.key_id and key.public_key_use in (None, "sig")
+    }
+    if not keys:
+        raise AuthConfigError("COGNITO_JWKS contains no signing keys.")
+
+    def resolve(kid: str) -> Any:
+        try:
+            return keys[kid]
+        except KeyError as exc:
+            raise KeyNotFound from exc
+
+    return resolve
+
+
 class TokenVerifier:
     def __init__(self, settings: CognitoSettings, resolve_key: KeyResolver | None = None) -> None:
         self.settings = settings
@@ -127,8 +159,24 @@ class TokenVerifier:
 
     @classmethod
     def from_env(cls) -> TokenVerifier | None:
+        """Verifier from the environment, or None when Cognito is not configured.
+
+        Keys come from ``COGNITO_JWKS`` (fixed at deploy time). Fetching the JWKS URL
+        at runtime needs internet access and is used only when explicitly allowed with
+        ``COGNITO_JWKS_FETCH=allow`` (local development outside the VPC). There is no
+        silent fallback: a missing document in the VPC fails at startup, not per request.
+        """
         settings = CognitoSettings.from_env()
-        return cls(settings) if settings else None
+        if settings is None:
+            return None
+        document = os.environ.get("COGNITO_JWKS", "").strip()
+        if document:
+            return cls(settings, static_key_resolver(document))
+        if os.environ.get("COGNITO_JWKS_FETCH", "").strip() == "allow":
+            return cls(settings)
+        raise AuthConfigError(
+            "COGNITO_JWKS is required (set COGNITO_JWKS_FETCH=allow only outside the VPC)."
+        )
 
     def verify(self, token: str) -> Principal:
         try:
