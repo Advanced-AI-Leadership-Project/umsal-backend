@@ -8,13 +8,13 @@
 1. 사용자의 최신 요청과 `git status --short --branch`를 확인한다. 무관한 변경을 덮어쓰지 않는다.
 2. SPEC의 현재 범위와 관련 코드·테스트를 읽고 작은 단위로 작업한다. 작업은 이슈에 연결한 `codex/<이슈번호>-<작업명>` 브랜치에서 진행한다.
 3. `src/umsal_backend`는 FastAPI 앱, `src/umsal_backend/lambda_handler.py`는 API Gateway → Lambda 진입점, `tests`는 앱 테스트, `tools`는 Git·CI 하네스, `infra/aws`는 CloudFormation 템플릿과 Lambda 빌드 스크립트다(절차는 `docs/aws-deployment.md`). `migrations`는 Alembic 마이그레이션, `compose.yaml`은 로컬 PostgreSQL이다.
-4. 현재 구현은 health(`/health`, `/api/health/{live,ready}`), Cognito 토큰 검증(`auth.py`), 사용자·관계 조회 API(`/api/me`, `/api/connections`), 초대 생성·수락 API(`/api/invitations`), 동의 조회·변경 API(`/api/connections/{id}/consents`)까지다. 연결 해제·분석 업무 API, AWS Aurora·DynamoDB·S3 저장은 아직 구현되지 않았다. 저장소별 역할은 SPEC의 "저장 계층"을 따른다. 목표 설계를 구현 완료로 보고하지 않는다.
+4. 현재 구현은 health(`/health`, `/api/health/{live,ready}`), Cognito 토큰 검증(`auth.py`), 사용자·관계 조회 API(`/api/me`, `/api/connections`), 초대 생성·수락 API(`/api/invitations`), 동의 조회·변경 API(`/api/connections/{id}/consents`), 연결 해제(`DELETE /api/connections/{id}`)까지다. 녹음·분석 업무 API, AWS Aurora·DynamoDB·S3 저장은 아직 구현되지 않았다. 저장소별 역할은 SPEC의 "저장 계층"을 따른다. 목표 설계를 구현 완료로 보고하지 않는다.
 
 ## 환경과 계약
 
 - Python `.python-version`, `pyproject.toml`의 uv `required-version`, `uv.lock`을 유지한다. 의존성 변경은 필요한 범위에 한정하고 `uv lock`으로 잠금 파일을 함께 갱신한다.
 - 가상환경·캐시·빌드 산출물(`.venv`, `.aws-sam`, `cdk.out` 등)을 커밋하지 않는다.
-- 목표 API 계약 원본은 `contracts/openapi.yaml`이고 실행 API 계약은 FastAPI의 `/openapi.json`이다. 계약을 바꾸면 같은 PR에서 예시·`tests/test_contracts.py`를 갱신하고 `docs/api-contract.md` 6절의 버전 규칙을 따른다. PWA와 공유하는 경로·필드를 바꾸면 PR에 호환성 영향과 PWA 측 후속 작업을 적는다.
+- 목표 API 계약 원본은 `contracts/openapi.yaml`이고 실행 API 계약은 FastAPI의 `/openapi.json`이다. 계약이나 구현 operation을 바꾸면 같은 PR에서 예시·`tests/test_contracts.py`·`tests/test_contract_parity.py`를 갱신하고 `docs/api-contract.md` 6절의 버전 규칙을 따른다. PWA와 공유하는 경로·필드를 바꾸면 PR에 호환성 영향과 PWA 측 후속 작업을 적는다.
 - 앱 코드는 AWS 자격 증명을 코드·설정 파일에 넣지 않는다. Lambda 실행 역할과 환경 변수로 주입한다.
 - 로컬 테스트는 AWS에 접속하지 않는다. AWS 연동 코드는 합성 이벤트·스텁·모의 객체로 검증한다.
 
@@ -38,7 +38,7 @@
 
 | 변경 | 확인할 검사 |
 |---|---|
-| Python 코드·의존성 | `make python-check` (Ruff·포맷·pytest·coverage 80%) |
+| Python 코드·의존성 | `make db-up` 후 `make python-check` (Ruff·포맷·실제 PostgreSQL을 쓰는 pytest·coverage 80%). DB 없이 돌리면 건너뛰지 않고 실패한다. 테스트가 그 로컬 DB에 마이그레이션을 적용하고 테이블을 비운다 |
 | 의존성 | 위 검사 + `make verify-security` |
 | Git·CI 하네스(`tools/`, `.github/`, `.githooks/`) | `make workflow-check` 및 `Review-Scope: harness` 독립 리뷰 |
 | AWS 배포·인프라 | 실제 배포 명령과 배포된 `/health` 응답. CI 통과로 대체하지 않는다 |

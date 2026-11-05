@@ -25,9 +25,13 @@ DATABASE_URL=postgresql://umsal:umsal_local@127.0.0.1:5434/umsal_backend make ap
 make db-down      # 컨테이너 중지(데이터 볼륨은 유지)
 ```
 
+만료된 멱등 기록·초대 정리: `DATABASE_URL=... uv run python -m umsal_backend.maintenance`(AWS 주기 실행은 2단계에서 연결).
+
 `make`가 없는 Windows에서는 `docker compose up -d --wait db`, `uv run alembic upgrade head`처럼 Makefile의 명령을 직접 실행하고 `DATABASE_URL`(통합 테스트는 `TEST_DATABASE_URL`)을 환경 변수로 지정한다. `POSTGRES_PORT`·`POSTGRES_USER`·`POSTGRES_PASSWORD`를 바꿨다면 `make db-migrate LOCAL_DATABASE_URL=...`처럼 같은 값을 넘긴다. Alembic·SQLAlchemy는 개발 의존성이라 Lambda zip에 들어가지 않는다. `DATABASE_URL`이 없으면 API는 DB에 접속하지 않고 ready의 `checks.aurora`는 `not_configured`다. 새 마이그레이션은 `uv run alembic revision -m "설명"`으로 만들고 SQL을 직접 쓴다. Aurora 적용 전에는 `uv run alembic upgrade head --sql`로 SQL을 검토한다.
 
 ## 검사
+
+Python 테스트는 실제 PostgreSQL이 필요하다. 먼저 `make db-up`으로 로컬 DB를 띄운다. DB가 없으면 `make python-check`는 건너뛰지 않고 실패한다. 테스트는 그 로컬 DB에 마이그레이션을 적용하고 테이블을 비우므로, 손으로 넣어 둔 합성 데이터는 지워진다. CI는 자체 PostgreSQL 서비스로 같은 테스트를 실행한다.
 
 ```bash
 make verify-fast      # 전체 tracked tree 정책 검사 + Ruff·포맷·pytest(coverage 80%)

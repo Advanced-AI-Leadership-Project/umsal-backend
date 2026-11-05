@@ -22,7 +22,7 @@
 | 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-backend | 구현(D2, #17). ready의 Aurora·DynamoDB 확인은 연결 구현 전이라 `not_configured` → 503 |
 | 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-pwa `services/api` | 구현. ready는 로컬 PostgreSQL `SELECT 1` |
 | 실행 | `GET /api/push/config`, `POST·DELETE /api/push/subscription`, `POST /api/push/test` | umsal-pwa `services/api` | 테스트 채널만 구현(기본 비활성) |
-| 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | umsal-backend (D1 확정) | `getMe`·`listConnections`·`getConnection`(#29), `createInvitation`·`acceptInvitation`(#31), `getConsents`·`updateConsents`(#34) 구현, 나머지 미구현 |
+| 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | umsal-backend (D1 확정) | `getMe`·`listConnections`·`getConnection`(#29), `createInvitation`·`acceptInvitation`(#31), `getConsents`·`updateConsents`(#34), `disconnect`(#36) 구현, 나머지 미구현 |
 | 목표 | worker operation 4개(`/internal/worker/jobs/{id}/claim·heartbeat·complete·fail`) | umsal-backend (D1 확정) | 미구현 |
 
 PWA 화면은 같은 출처의 `/api/health/{live,ready}`를 호출하고 `service == "api"`, ready의 `checks.database == "ok"`를 확인한다. 이 백엔드도 D2에 따라 같은 경로와 응답 모양을 제공한다. 단, Aurora·DynamoDB 연결 확인을 붙이기 전까지 ready는 503 `not_ready`이므로 PWA의 ready 확인은 실패로 표시된다.
@@ -43,8 +43,8 @@ D1·D2·D3·D5·D6·D7·D9·D11·D12는 확정됐고, 나머지(D4·D8·D10)는 
 | D8 | MVP 범위 | 28개 operation 전체가 P0 후보 | 발표 범위(umsal-pwa #17)에 맞춰 1차 구현 operation을 고른다. 결정 전에는 계약에서 operation을 삭제하지 않는다 |
 | D9 | 작업자의 S3 산출물 쓰기 | 원안은 작업자가 결과 artifact를 S3의 job 전용 출력 prefix에 직접 쓰고, complete에서 참조만 제출한다(설계 문서 "기계 작업 계약" 3·5번). AGENTS의 "작업자는 Aurora·DynamoDB·S3에 직접 쓰지 않고 API를 거친다"(#7, PR #8에서 추가)와 충돌한다 | **확정(2026-11-05, 사용자 결정):** 원안 구조를 유지하고 AGENTS 문구를 좁혔다. 작업자는 Aurora·DynamoDB와 원음 key에는 쓰지 않고, S3에는 claim이 허용한 job 전용 출력 prefix에만 쓴다. 그 산출물은 API가 검증·commit하기 전까지 결과로 취급하지 않는다. 강한 job별 격리가 필요하면 API가 출력용 presigned PUT URL을 발급하는 방식을 검토한다. AGENTS 제품 불변조건에 반영했다 |
 | D10 | 표시 이름 출처 | 계약 `Actor.display_name`은 필수 문자열이지만 값을 설정하는 operation이 없고, Cognito access token에는 이름이 없다 | 미정(#29에서 발견). 후보: 프로필 수정 operation 추가, 초대 수락 때 입력, Cognito ID token·사용자 속성 사용. 결정 전까지 서버는 빈 문자열을 반환한다 |
-| D11 | 초대 유효 기간·코드 | 계약은 `expires_at`만 있고 기간·코드 형식이 없다 | **확정(2026-11-05, 사용자 승인, #31):** 유효 24시간, 코드 10자(Crockford base32, 대소문자·하이픈·공백 무시), 수락에는 초대 ID와 코드가 모두 필요. 코드는 SHA-256만 저장한다. 다만 같은 `Idempotency-Key` 재전송에 같은 응답을 주려고 원문 코드가 멱등 기록에 남는다. 기록은 24시간 뒤 만료되어 재전송에 쓰이지 않고 같은 사용자의 다음 요청 때 지워지지만, 정기 삭제 작업(후속 이슈)이 생기기 전에는 그 사용자가 다시 요청하지 않으면 만료 뒤에도 DB에 남을 수 있다. 수락은 ACTIVE 관계를 만들고 grant는 만들지 않는다(FR-02) |
-| D12 | 동의 기본값·계산 규칙 | 계약은 `ConsentView.version ≥ 1`, `expected_version ≥ 0`, 서버 계산 `both_analysis_allowed`·`verification_preview_allowed`만 정한다 | **확정(2026-11-05, 사용자 승인, #34):** 관계가 생길 때 양쪽 방향 모두 전부 거부·버전 1 행을 만든다(초대 수락은 동의가 아님). `both_analysis_allowed`와 `verification_preview_allowed`는 양쪽이 모두 허용하고 관계가 ACTIVE일 때만 참이다. 해제된 관계의 동의는 바꿀 수 없다(409). 기본 행이 없는 관계(직접 삽입·이전 데이터)는 동의 API 첫 접근 때 기본 거부 행을 만들므로 GET도 한 번 쓰기를 할 수 있다. 관계 해제 시 동의 행 처리는 해제 API에서 정한다. 동의 요청의 boolean·정수는 엄격히 검사해 `"yes"`·`1` 같은 값을 거절한다. 분석 동의 철회 시 진행 중 처리 취소는 녹음·작업 구현 때 연결한다 |
+| D11 | 초대 유효 기간·코드 | 계약은 `expires_at`만 있고 기간·코드 형식이 없다 | **확정(2026-11-05, 사용자 승인, #31):** 유효 24시간, 코드 10자(Crockford base32, 대소문자·하이픈·공백 무시), 수락에는 초대 ID와 코드가 모두 필요. 코드는 SHA-256만 저장한다. 다만 같은 `Idempotency-Key` 재전송에 같은 응답을 주려고 원문 코드가 멱등 기록에 남는다. 기록은 24시간 뒤 만료되어 재전송에 쓰이지 않고 같은 사용자의 다음 요청 때 지워지지만, 이를 막는 정리 작업 `umsal_backend.maintenance`(#36)가 모든 사용자의 만료 기록과 만료된 미수락 초대를 지운다. 이 작업의 주기 실행(EventBridge Scheduler → Lambda)은 2단계 배포에서 연결하며, 그 전에는 수동 실행해야 한다. 수락은 ACTIVE 관계를 만들고 grant 행은 전부 거부 상태로만 만들며 동의로 보지 않는다(FR-02, D12) |
+| D12 | 동의 기본값·계산 규칙 | 계약은 `ConsentView.version ≥ 1`, `expected_version ≥ 0`, 서버 계산 `both_analysis_allowed`·`verification_preview_allowed`만 정한다 | **확정(2026-11-05, 사용자 승인, #34):** 관계가 생길 때 양쪽 방향 모두 전부 거부·버전 1 행을 만든다(초대 수락은 동의가 아님). `both_analysis_allowed`와 `verification_preview_allowed`는 양쪽이 모두 허용하고 관계가 ACTIVE일 때만 참이다. 해제된 관계의 동의는 바꿀 수 없다(409). 기본 행이 없는 관계(직접 삽입·이전 데이터)는 동의 API 첫 접근 때 기본 거부 행을 만들므로 GET도 한 번 쓰기를 할 수 있다. 관계 해제(#36)는 관계를 DISCONNECTED·version+1로 바꾸고 양방향 grant를 전부 거부·version+1로 되돌린다(행은 남김). 이미 해제된 관계의 해제 요청은 상태 변화 없이 같은 202다. 보관 자료 삭제는 하지 않는다. 동의 요청의 boolean·정수는 엄격히 검사해 `"yes"`·`1` 같은 값을 거절한다. 분석 동의 철회 시 진행 중 처리 취소는 녹음·작업 구현 때 연결한다 |
 
 ## 4. 상태 흐름 정합
 
@@ -101,7 +101,7 @@ umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변�
 1. OpenAPI를 바꾸는 PR은 같은 PR에서 관련 JSON 예시(`contracts/examples`)와 정적 계약 검사를 갱신한다.
 2. 필드 삭제·이름 변경·enum 값 삭제·필수 필드 추가는 호환성을 깨는 변경이다. `info.version`의 주 버전을 올리고, PR에 PWA 측 후속 작업을 적는다(AGENTS "환경과 계약").
 3. 선택 필드·enum 값 추가는 부 버전을 올린다. PWA는 모르는 enum 값을 "알 수 없음"으로 표시하고 정상으로 해석하지 않는다.
-4. FastAPI가 내보내는 `/openapi.json`과 원본 계약의 차이를 CI에서 비교한다. 차이가 있으면 구현 또는 계약 중 하나를 고친다.
+4. FastAPI가 내보내는 `/openapi.json`과 원본 계약의 차이를 CI에서 비교한다. 차이가 있으면 구현 또는 계약 중 하나를 고친다. **구현(#36):** `tests/test_contract_parity.py`가 `/api` 아래 구현 operation의 operationId·메서드·경로·성공 코드·`Idempotency-Key` 필수 여부를 계약과 비교하고, 계약에 없는 operation을 거부한다. 요청·응답 본문 스키마는 엔드포인트 테스트의 `contract_schema` 검사로 확인한다
 5. 프런트 타입은 원본 계약에서 생성하고 손으로 고치지 않는다.
 6. JSON Schema 검증은 필드·형식만 확인한다. 권한·경합·동의 같은 의미 검사는 서버 테스트로 따로 검증한다.
 

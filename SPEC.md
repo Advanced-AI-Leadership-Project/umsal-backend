@@ -50,13 +50,14 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 | Lambda 핸들러 | 구현. 합성 API Gateway HTTP API v2 이벤트로만 테스트했다 |
 | AWS 배포(IaC) | 1단계 구현(#19). API Gateway HTTP API + Lambda를 CloudFormation으로 배포했고 배포 주소의 health 응답을 확인했다([배포 문서](docs/aws-deployment.md)). VPC·Aurora·DynamoDB·S3·Cognito·CloudFront 연결은 미구현 |
 | 사용자 인증 | Cognito access token 검증 의존성 구현(D3, #21). 합성 키·토큰으로만 테스트했다. 사용자 풀이 없고 배포 환경에 설정이 없어 인증이 필요한 경로는 503으로 막힌다 |
-| 사용자·관계 조회 | `GET /api/me`(인증된 첫 성공 요청에서 사용자 생성, 실패한 요청의 트랜잭션은 되돌림), `GET /api/connections`(cursor 페이지), `GET /api/connections/{id}`(비참여자 404) 구현(#29). `users`·`connections` 마이그레이션 `0002`. 실제 PostgreSQL 테스트만 거쳤고 AWS에는 미배포. 연결 해제는 미구현, 표시 이름은 빈 문자열(D10) |
-| 초대 | `POST /api/invitations`(24시간 유효 코드, 해시만 저장), `POST /api/invitations/{id}/accept`(ACTIVE 관계 생성, 1회 수락, 동시 수락 방지) 구현(#31). 두 경로 모두 `Idempotency-Key` 필수(같은 요청 재전송, 다른 요청 409). 마이그레이션 `0003`. 실제 PostgreSQL 테스트만 거쳤고 AWS 미배포. 요청 한도(429)·만료 기록 정기 삭제 미구현 |
+| 사용자·관계 조회 | `GET /api/me`(인증된 첫 성공 요청에서 사용자 생성, 실패한 요청의 트랜잭션은 되돌림), `GET /api/connections`(cursor 페이지), `GET /api/connections/{id}`(비참여자 404) 구현(#29). `users`·`connections` 마이그레이션 `0002`. 실제 PostgreSQL 테스트만 거쳤고 AWS에는 미배포. 표시 이름은 빈 문자열(D10) |
+| 초대 | `POST /api/invitations`(24시간 유효 코드, 해시만 저장), `POST /api/invitations/{id}/accept`(ACTIVE 관계 생성, 1회 수락, 동시 수락 방지) 구현(#31). 두 경로 모두 `Idempotency-Key` 필수(같은 요청 재전송, 다른 요청 409). 마이그레이션 `0003`. 실제 PostgreSQL 테스트만 거쳤고 AWS 미배포. 요청 한도(429) 미구현. 만료 기록·만료 미수락 초대 정리 작업 `python -m umsal_backend.maintenance`(#36)는 있으나 주기 실행은 2단계 배포 때 연결 |
 | 동의 | `GET/PUT /api/connections/{id}/consents` 구현(#34). 방향별 grant(분석·공유 scope·확인 preview), 관계 생성 시 전부 거부로 시작, 본인 행만 `expected_version`으로 수정, 서버가 양쪽 허용 여부 계산(ACTIVE일 때만). 마이그레이션 `0004`. 실제 PostgreSQL 테스트만 거쳤고 AWS 미배포. 분석 동의 철회 시 처리 취소는 녹음·작업이 없어 미연결 |
+| 연결 해제 | `DELETE /api/connections/{id}` 구현(#36). 관계 행 잠금 → DISCONNECTED·version+1 → 양방향 grant 전부 거부·version+1, 이미 해제면 변화 없는 202, `Idempotency-Key` 필수. 보관 자료 삭제는 하지 않는다(별도 삭제 요청). 실제 PostgreSQL 테스트만, AWS 미배포 |
 | 분석 | 미구현 |
 | PostgreSQL 연결·마이그레이션 | 기반 구현(#23). 로컬 Docker PostgreSQL 17, `DATABASE_URL` 연결(연결 3초·쿼리 3초 제한), ready의 `checks.aurora` 실제 확인, Alembic(`0001` 기준, `0002` users·connections, `0003` invitations·idempotency_keys, `0004` consent_grants). 나머지 업무 테이블과 AWS Aurora는 미구현 |
 | DynamoDB·S3 저장 | 미구현 |
-| API 계약 | 원본을 `contracts/openapi.yaml`(v0.3.0)로 이관(#25). 정적 검사와 구현된 health 응답의 스키마 검사를 테스트로 실행한다. 업무 operation 28개는 계약만 있고 미구현 |
+| API 계약 | 원본을 `contracts/openapi.yaml`(v0.3.0)로 이관(#25). 정적 검사, 구현 operation과 계약의 자동 비교(`tests/test_contract_parity.py`, #36), 응답 스키마 검사를 테스트로 실행한다. 업무 operation 28개 중 8개 구현 |
 | PWA 연동 | health 경로만 PWA 계약에 맞춤. 업무 API와 실제 연결 확인은 미구현 |
 
 목표 설계를 구현 완료로 보고하지 않는다. 기능이 추가되면 위 표를 실제 상태로 갱신한다.
