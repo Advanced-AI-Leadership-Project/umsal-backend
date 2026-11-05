@@ -1,6 +1,6 @@
 # 백엔드 API AWS 배포 (1단계)
 
-기준일: 2026-11-05 · 이슈 #19. MVP 구현 전에 배포 경로를 검증하려고 지금 코드를 API Gateway HTTP API + Lambda로 배포했다. VPC·Aurora·DynamoDB·S3 원음·Cognito·CloudFront 연결은 이 단계에 없다.
+기준일: 2026-11-05 · 이슈 #19. MVP 구현 전에 배포 경로를 검증하려고 지금 코드를 API Gateway HTTP API + Lambda로 배포했다. VPC·RDS PostgreSQL·DynamoDB·S3 원음·Cognito·CloudFront 연결은 이 단계에 없다.
 
 ## 구조
 

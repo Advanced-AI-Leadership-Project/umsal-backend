@@ -83,6 +83,8 @@ def test_bootstrap_is_idempotent_and_grants_least_privilege(rds_like_master, mig
 
 
 def test_handler_reads_master_secret_and_verifies_tls(monkeypatch, capsys):
+    monkeypatch.delenv("DB_NAME", raising=False)
+    monkeypatch.delenv("DB_PORT", raising=False)
     monkeypatch.setenv("DB_HOST", "umsal.synthetic.ap-southeast-2.rds.amazonaws.com")
     monkeypatch.setenv("AWS_REGION", "ap-southeast-2")
     monkeypatch.setenv("DB_MASTER_SECRET_ARN", "arn:aws:secretsmanager:ap-southeast-2:1:secret:x")
