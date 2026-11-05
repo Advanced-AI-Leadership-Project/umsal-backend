@@ -30,10 +30,14 @@ db-test:
 
 check: python-check workflow-check
 
+# API tests need a real PostgreSQL (make db-up). Like CI, a missing database fails
+# instead of skipping, so coverage is never measured on a silently reduced suite.
+TEST_DATABASE_URL ?= $(LOCAL_DATABASE_URL)
+
 python-check:
 	uv run --locked ruff check .
 	uv run --locked ruff format --check .
-	uv run --locked pytest -q
+	TEST_DATABASE_URL=$(TEST_DATABASE_URL) REQUIRE_DATABASE_TESTS=1 uv run --locked pytest -q
 
 format:
 	uv run --locked ruff check --fix .
