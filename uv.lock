@@ -1064,6 +1064,10 @@ dev = [
     { name = "sqlalchemy" },
     { name = "uvicorn" },
 ]
+migrations = [
+    { name = "alembic" },
+    { name = "sqlalchemy" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1087,6 +1091,10 @@ dev = [
     { name = "ruff", specifier = ">=0.11,<1" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
     { name = "uvicorn", specifier = ">=0.32,<1" },
+]
+migrations = [
+    { name = "alembic", specifier = ">=1.14,<2" },
+    { name = "sqlalchemy", specifier = ">=2.0,<3" },
 ]
 
 [[package]]
