@@ -65,10 +65,11 @@ def test_bootstrap_is_idempotent_and_grants_least_privilege(rds_like_master, mig
 
     with psycopg.connect(migrated_db, autocommit=True) as admin:
         admin.execute("SET ROLE umsal_migrator")
-        admin.execute("CREATE TABLE bootstrap_probe (id int)")
+        admin.execute("CREATE TABLE bootstrap_probe (id serial)")
         admin.execute("RESET ROLE")
         admin.execute("SET ROLE umsal_app")
-        admin.execute("INSERT INTO bootstrap_probe VALUES (1)")
+        # serial needs USAGE on the sequence: checks the SEQUENCES default privilege too.
+        admin.execute("INSERT INTO bootstrap_probe DEFAULT VALUES")
         assert admin.execute("SELECT count(*) FROM bootstrap_probe").fetchone() == (1,)
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             admin.execute("CREATE TABLE app_must_not_create (id int)")
@@ -99,6 +100,10 @@ def test_handler_reads_master_secret_and_verifies_tls(monkeypatch, capsys):
     assert kwargs["user"] == "umsal_admin"
     assert kwargs["sslmode"] == "verify-full"
     assert kwargs["dbname"] == "umsal"
+    assert kwargs["sslrootcert"] == str(db_bootstrap.DEFAULT_CA_BUNDLE)
+    assert kwargs["port"] == 5432
+    assert kwargs["autocommit"] is True
+    assert kwargs["connect_timeout"] == 20
     output = capsys.readouterr().out
     assert "synthetic" not in output.replace("synthetic.ap-southeast-2", "")
     assert json.loads(output.strip()) == {"bootstrapped": {"roles": ["umsal_app"]}}

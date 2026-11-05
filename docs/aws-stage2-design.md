@@ -1,8 +1,8 @@
-# 2단계 AWS 설계: VPC·Aurora·Cognito
+# 2단계 AWS 설계: VPC·RDS PostgreSQL·Cognito
 
 기준일: 2026-11-05 · 이슈 #38(초안), #40(VPC 확정) · **설계와 견적만 담았다. AWS 자원은 만들지 않았다.** 생성은 사용자가 확인한 뒤 별도 작업에서 한다.
 
-**결정(2026-11-05, 사용자):** SPEC의 기존 원칙대로 **VPC 방식**을 쓴다. Lambda와 Aurora를 전용 VPC의 프라이빗 서브넷에 둔다. #38에서 제안한 Aurora express configuration(VPC 없음)은 네트워크 방어선이 IAM 한 겹뿐이라 채택하지 않았다(아래 "버린 대안").
+**결정(2026-11-05, 사용자):** SPEC의 기존 원칙대로 **VPC 방식**을 쓴다. Lambda와 DB를 전용 VPC의 프라이빗 서브넷에 둔다. #38에서 제안한 Aurora express configuration(VPC 없음)은 네트워크 방어선이 IAM 한 겹뿐이라 채택하지 않았다(아래 "버린 대안").
 
 **변경(2026-11-05, 사용자, #44): Aurora 대신 RDS for PostgreSQL.** 실제 생성에서 Aurora가 `To use Aurora clusters with free plan accounts you need to set WithExpressConfiguration`으로 거부됐다(자동 롤백, 비용 없음). Free 플랜에서는 Aurora를 express(VPC 없음)로만 만들 수 있다. Free 플랜과 VPC 원칙을 함께 지키려고 VPC 안 RDS for PostgreSQL 17.11을 쓴다. 이 문서의 Aurora 관련 항목은 아래처럼 대체됐고, 코드(IAM 토큰 접속·TLS 검증)는 그대로다.
 
@@ -20,10 +20,10 @@ flowchart LR
     Lambda[API Lambda]
     Migrate[마이그레이션 Lambda]
     Maint[정리 작업 Lambda]
-    Aurora[(Aurora PostgreSQL serverless · IAM 인증)]
-    Lambda -->|IAM 토큰 · TLS 5432| Aurora
-    Migrate -->|IAM 토큰 · TLS| Aurora
-    Maint -->|IAM 토큰 · TLS| Aurora
+    RDS[(RDS for PostgreSQL 17.11 · IAM 인증)]
+    Lambda -->|IAM 토큰 · TLS 5432| RDS
+    Migrate -->|IAM 토큰 · TLS| RDS
+    Maint -->|IAM 토큰 · TLS| RDS
   end
   API --> Lambda
   Op[운영자] -->|aws lambda invoke| Migrate
@@ -43,9 +43,9 @@ flowchart LR
 
 ### 보안 요구사항
 
-- **TLS 검증**: `sslmode=verify-full`과 RDS 글로벌 CA 번들(Lambda 패키지에 포함)로 서버 인증서를 검증한다. 서버 쪽도 클러스터 파라미터 `rds.force_ssl=1`로 암호화되지 않은 연결을 거부한다.
+- **TLS 검증**: `sslmode=verify-full`과 RDS 글로벌 CA 번들(Lambda 패키지에 포함)로 서버 인증서를 검증한다. 서버 쪽도 DB 파라미터 그룹의 `rds.force_ssl=1`로 암호화되지 않은 연결을 거부한다.
 - **일회용 스택은 바로 지운다**: 사용자 생성이 끝나면 `umsal-backend-db-bootstrap` 스택을 삭제해 엔드포인트와 마스터 비밀번호 읽기 권한을 함께 없앤다. RDS 마스터는 슈퍼유저가 아니므로 SQL이 `GRANT umsal_migrator TO CURRENT_USER` 후 기본 권한을 설정한다.
-- **`rds-db:connect` 최소 권한**: API·정리 작업 Lambda는 앱 사용자 하나(`dbuser:<cluster-resource-id>/<app-user>`)에만, 마이그레이션 Lambda는 마이그레이션 사용자 하나에만 허용한다. `dbuser:*`는 쓰지 않는다. 앱 사용자에게 DDL 권한을 주지 않는다. 마스터 사용자는 코드가 쓰지 않는다.
+- **`rds-db:connect` 최소 권한**: API·정리 작업 Lambda는 앱 사용자 하나(`dbuser:<DB 인스턴스 DbiResourceId(db-…)>/<app-user>`)에만, 마이그레이션 Lambda는 마이그레이션 사용자 하나에만 허용한다. `dbuser:*`는 쓰지 않는다. 앱 사용자에게 DDL 권한을 주지 않는다. 마스터 사용자는 코드가 쓰지 않는다.
 - **마이그레이션 Lambda 호출 권한**은 운영자 역할에만 준다. 이 Lambda는 API Gateway에 연결하지 않는다.
 - **합성 데이터만**: 보관·삭제 정책(umsal-pwa #19)이 정해지기 전에는 실제 사용자 자료를 넣지 않는다.
 
@@ -87,14 +87,14 @@ flowchart LR
 
 ## 4. 코드 변경 목록
 
-**구현(#42):** 1·2·4(사용자 생성 SQL 제외)·5·6 항목과 정리 작업 스케줄을 코드와 템플릿(`api.yaml` 선택 파라미터, `jobs.yaml`, `build_lambda.py --kind migrate`, `stage2_params.py`)으로 구현했다. 3(재개 지연 실측)·4의 사용자 생성 SQL·8(CloudFront)은 생성 단계에서 한다. AWS에는 아직 배포하지 않았다.
+**구현(#42):** 1·2·5·6 항목과 정리 작업 스케줄을 코드와 템플릿(`api.yaml` 선택 파라미터, `jobs.yaml`, `build_lambda.py --kind migrate`, `stage2_params.py`)으로 구현했다. **#44:** 4(사용자 생성)를 일회용 `db-bootstrap` 스택으로 구현했다. 8(CloudFront)은 umsal-pwa와 정한 뒤 한다. AWS에는 아직 배포하지 않았다.
 
 
 1. **IAM 토큰 접속**: `db.connect`가 `DB_HOST`·`DB_USER`·`DB_NAME`·리전으로 `rds.generate_db_auth_token`을 호출해 비밀번호로 쓰고 `sslmode=verify-full`로 접속한다. 토큰은 약 10분 캐시하고, IAM 인증의 신규 연결 속도 한도를 연결 수와 함께 본다. 로컬은 지금처럼 `DATABASE_URL`을 유지한다. `db.py` docstring의 "Secrets Manager 주입" 서술을 고친다.
 2. **JWKS 정적 로딩**: `auth.py`에 이미 있는 키 해석기 주입을 써서, 환경 변수(또는 배포 패키지 파일)로 받은 JWKS에서 `kid`로 키를 찾는다. 배포 스크립트가 배포 때 `https://cognito-idp.<region>.amazonaws.com/<pool>/.well-known/jwks.json` **문서 전체**(보통 키 2개)를 받아 넣는다. 알 수 없는 `kid`는 401이고 실행 중 재조회는 하지 않는다. **정적 JWKS 설정이 없을 때 URL 조회 해석기로 조용히 되돌아가지 않는다**(VPC 안에서는 모든 요청이 503이 되므로, 설정 누락은 시작 시 오류로 드러나게 한다).
 3. **연결 제한 시간**: RDS는 항상 켜져 있어 재개 지연이 없다. API는 연결 제한 8초, 작업 Lambda는 20초로 둔다.
    - 요청마다 연결을 닫는다(연결 수 관리, db.t4g.micro의 연결 한도 고려).
-4. **앱·마이그레이션 DB 사용자**: 마이그레이션 Lambda가 처음 실행될 때(또는 운영자 절차로) 앱 사용자와 마이그레이션 사용자를 만들고 `rds_iam` 역할과 필요한 권한만 준다.
+4. **앱·마이그레이션 DB 사용자**: 일회용 `umsal-backend-db-bootstrap` 스택의 Lambda가 마스터 비밀번호로 앱 사용자와 마이그레이션 사용자를 만들고 `rds_iam` 역할과 필요한 권한만 준다(2절 표). 마이그레이션 Lambda는 사용자를 만들지 않는다.
 5. **마이그레이션 Lambda**: Alembic과 `migrations/`를 담는 별도 패키지(현재 Alembic은 개발 의존성이라 API zip에 없다), 핸들러는 `upgrade head`만 수행하고 결과 revision만 로그에 남긴다.
 6. **Lambda 설정**(`api.yaml`): `VpcConfig`(프라이빗 서브넷·Lambda 보안 그룹), `COGNITO_*`·DB 환경 변수, 실행 역할에 `rds-db:connect`와 VPC ENI 권한(`AWSLambdaVPCAccessExecutionRole` 상당의 최소 권한).
 7. **ready 확인**: `checks.aurora`가 같은 IAM 접속을 쓴다. DynamoDB는 3단계까지 `not_configured`라 전체 ready는 계속 503이다.
@@ -105,7 +105,7 @@ flowchart LR
 1. `umsal-backend-auth`(Cognito) 생성 → 사용자 풀 ID·클라이언트 ID를 PWA와 공유, 콜백 경로 합의
 2. `umsal-backend-network`(VPC) 생성
 3. `umsal-backend-database`(RDS PostgreSQL) 생성 — 네트워크 출력값(서브넷·DB 보안 그룹)을 파라미터로 전달. 생성 전 change set으로 확인
-4. `python infra/aws/stage2_params.py …`로 파라미터 파일을 만들고 `umsal-backend-db-bootstrap` 스택 생성 → `aws lambda invoke`로 사용자 생성(결과는 역할 이름만) → **스택 삭제(체크리스트, 생략 금지)**
+4. `python infra/aws/stage2_params.py …`로 파라미터 파일을 만들고 `umsal-backend-db-bootstrap` 스택 생성 → `aws lambda invoke`로 사용자 생성(결과는 역할 이름만) → **스택 삭제(체크리스트, 생략 금지)** → `aws cloudformation describe-stacks --stack-name umsal-backend-db-bootstrap`이 `does not exist`를 내는지 확인
 5. 구현 PR의 코드로 마이그레이션 Lambda 배포·실행(`upgrade head`)
 6. API Lambda를 VPC·환경 변수·권한과 함께 재배포 → `/api/health/ready`의 `aurora: ok`, 합성 계정으로 `/api/me` 확인
 7. 정리 작업 Lambda와 스케줄 연결
@@ -126,12 +126,12 @@ JWKS를 배포 때 고정하므로 Cognito가 서명 키를 바꾸면 **새 키�
 
 ## 7. 버린 대안: Aurora express configuration (#38 초안)
 
-express는 고객 VPC 없이 AWS 관리형 internet access gateway와 IAM 인증만으로 접속하는 구성이다. NAT·엔드포인트가 필요 없고 마이그레이션을 운영자 PC에서 할 수 있지만, DB 엔드포인트가 인터넷에 보이고 보안 그룹·IP 제한 같은 네트워크 계층 통제가 없어 방어선이 IAM 인증 + TLS 한 겹뿐이다. VPC 방식도 JWKS 고정 배포와 IAM 인증으로 같은 수준의 비용(월 약 USD 13~26)에 맞출 수 있어 VPC를 택했다.
+express는 고객 VPC 없이 AWS 관리형 internet access gateway와 IAM 인증만으로 접속하는 구성이다. NAT·엔드포인트가 필요 없고 마이그레이션을 운영자 PC에서 할 수 있지만, DB 엔드포인트가 인터넷에 보이고 보안 그룹·IP 제한 같은 네트워크 계층 통제가 없어 방어선이 IAM 인증 + TLS 한 겹뿐이다. VPC 방식도 JWKS 고정 배포와 IAM 인증으로 NAT 없이 구성할 수 있어 VPC를 택했다(당시 Aurora VPC 기준 월 약 USD 13~26 견적. Free 플랜에서 Aurora VPC가 막혀 현재는 RDS로 약 USD 21, 3절).
 
 ## 근거
 
-- [Aurora Serverless v2 scale to zero](https://aws.amazon.com/blogs/database/introducing-scaling-to-0-capacity-with-amazon-aurora-serverless-v2/)
-- [IAM database authentication](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/UsingWithRDS.IAMDBAuth.html)
+- [RDS for PostgreSQL SSL/TLS](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Concepts.General.SSL.html)
+- [IAM database authentication](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html)
 - [Cognito JWT 검증과 공개 키 캐시](https://repost.aws/knowledge-center/decode-verify-cognito-json-token)
 - [Lambda in a VPC](https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html)
-- [Free plan supported services](https://docs.aws.amazon.com/accounts/latest/reference/supported-services-sign-up-new.html), [Aurora Free plan limits](https://docs.aws.amazon.com/rds/latest/auroraextendedcontent/aurora-features-cost-effective.html)
+- [Free plan supported services](https://docs.aws.amazon.com/accounts/latest/reference/supported-services-sign-up-new.html), [Aurora Free plan limits](https://docs.aws.amazon.com/rds/latest/auroraextendedcontent/aurora-features-cost-effective.html)(Aurora 거부 근거)
