@@ -1,6 +1,6 @@
-# 백엔드 API AWS 배포 (1·2단계)
+# 백엔드 API AWS 배포 (1·2·3단계)
 
-기준일: 2026-11-05 · 이슈 #19(1단계), #49(2단계 기록). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). DynamoDB·S3 원음·CloudFront 연결은 아직 없다. 아래 구조·절차는 1단계 기준이다.
+기준일: 2026-11-05 · 이슈 #19(1단계), #49(2단계 기록), #54(3단계 기록). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). 3단계에서 DynamoDB 테이블과 원음 S3 버킷(기반만)을 만들어 ready가 200이 됐다([3단계 배포 기록](#3단계-배포-기록)). CloudFront 연결은 아직 없다. 아래 구조·절차는 1단계 기준이다.
 
 ## 구조
 
@@ -71,7 +71,7 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 
 ## 비용·중지·삭제
 
-1단계 자원(API Gateway·Lambda·S3)은 소량 요청이면 무료 제공량 안에 든다. 2단계의 RDS 인스턴스는 상시 과금되며 견적은 [aws-stage2-design.md 3절](aws-stage2-design.md#3-비용-견적-ap-southeast-2)을 따른다. NAT는 없다. 실제 청구는 AWS Settings > Billing에서 확인한다.
+1단계 자원(API Gateway·Lambda·S3)은 소량 요청이면 무료 제공량 안에 든다. 2단계의 RDS 인스턴스는 상시 과금되며 견적은 [aws-stage2-design.md 3절](aws-stage2-design.md#3-비용-견적-ap-southeast-2)을 따른다. 3단계의 DynamoDB·S3는 시간당 요금 없이 사용량만 과금된다([aws-stage3-design.md 3절](aws-stage3-design.md#3-비용-ap-southeast-2)). NAT는 없다. 실제 청구는 AWS Settings > Billing에서 확인한다.
 즉시 중지하려면 함수의 reserved concurrency를 0으로 바꾼다. 스택 삭제는 운영자가 판단해 별도로 실행한다. artifact 버킷은 `Retain`이라 스택 삭제 뒤에도 남으므로 버전까지 직접 정리해야 한다.
 
 ## 2단계 배포 기록
@@ -115,7 +115,28 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 - VPC 안 Lambda가 있는 스택의 삭제·롤백은 ENI 정리 때문에 20~40분 걸릴 수 있다. 그동안 같은 스택의 다른 자원(예: bootstrap의 Secrets Manager 엔드포인트)도 남아 과금된다.
 - 실패해 `ROLLBACK_COMPLETE`가 된 스택은 갱신할 수 없으므로 삭제한 뒤 다시 만든다.
 
+## 3단계 배포 기록
+
+설계는 [aws-stage3-design.md](aws-stage3-design.md)(#52). 2026-11-05에 코드 commit `3611c1e1a366acd2ca02e820a603df17e35b4988`(PR #53)로 진행했다. 두 템플릿은 생성 전에 `validate-template`을 통과했다.
+
+| 순서 | 스택 / 동작 | 결과 |
+|---|---|---|
+| 1 | `umsal-backend-storage`([storage.yaml](../infra/aws/storage.yaml)) | change set은 `ResultsTable`·`AudioBucket`·`AudioBucketPolicy` 추가만, `CREATE_COMPLETE` |
+| 2 | API zip 빌드·업로드 | `lambda/3611c1e….zip` |
+| 3 | `stage2_params.py --with-storage` | `api-params.json`에 `DynamoTableName` 추가(10개 파라미터) |
+| 4 | `umsal-backend-api` 갱신 | change set은 `ApiFunction`·`ApiIntegration`·`FunctionRole` 수정만(교체 없음), API 주소 유지 |
+
+| 요청 | 결과 |
+|---|---|
+| `GET /api/health/live` | 200 |
+| `GET /api/health/ready` | 200 `ready`, `checks`: `database: ok`, `aurora: ok`, `dynamodb: ok`. 첫 요청(새 Lambda 실행 환경) 약 7.3초, 이후 약 0.8~1.0초 |
+| `GET /api/me` (토큰 없음) | 401 |
+
+- 테이블과 버킷은 비어 있다. API 역할은 테이블에 `dynamodb:DescribeTable`만 있고 버킷 권한은 없다.
+- 두 자원 모두 `Retain`이고 테이블은 삭제 보호가 켜져 있어, 스택을 지워도 남는다. 정리는 사용자가 판단해 별도로 한다.
+- AWS 가격 도구 MCP는 `aws login` 자격 증명에 필요한 `botocore[crt]`가 없어 실패했고, 단가는 `aws pricing get-products`(us-east-1 엔드포인트)로 조회했다([설계 3절](aws-stage3-design.md#3-비용-ap-southeast-2)).
+
 ## 다음 단계
 
-- DynamoDB·S3 원음 단계: 기반은 [aws-stage3-design.md](aws-stage3-design.md)(#52). 이것이 배포돼야 `/api/health/ready`가 200이 된다.
+- 업로드·작업·결과 API(항목 키 설계, S3 CORS·presigned URL, API의 항목·버킷 권한): MVP 범위(D8) 결정 뒤
 - CloudFront `/api/*`를 이 API로 보낼지(경로 분리 포함) umsal-pwa와 조율
