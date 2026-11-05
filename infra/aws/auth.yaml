@@ -51,6 +51,8 @@ Resources:
           RequireNumbers: true
           RequireSymbols: false
           RequireUppercase: false
+      # Open self sign-up and MFA OFF are draft defaults for a small synthetic-data trial.
+      # Decide before real users: invitation-only (AllowAdminCreateUserOnly) and OPTIONAL MFA.
       MfaConfiguration: 'OFF'
       UserPoolTags: {Project: umsal-backend}
   Domain:
@@ -83,6 +85,7 @@ Resources:
         RefreshToken: days
   Branding:
     Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: Domain  # managed login needs the domain to exist first
     Properties:
       UserPoolId: !Ref UserPool
       ClientId: !Ref WebClient

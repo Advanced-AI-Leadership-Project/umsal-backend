@@ -36,7 +36,9 @@ Resources:
     Metadata:
       # cfn-lint 1.59.0 ships a DBCluster schema without WithExpressConfiguration. The live
       # registry schema in ap-southeast-2 has it (boolean, create-only; checked 2026-11-05
-      # with `aws cloudformation describe-type`). Only E3002 is ignored, only here.
+      # with `aws cloudformation describe-type`). Only E3002 is ignored, only here. This also
+      # hides typos in other properties of this resource: run validate-template and a change
+      # set before the first create.
       cfn-lint:
         config:
           ignore_checks: [E3002]

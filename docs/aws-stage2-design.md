@@ -35,9 +35,18 @@ flowchart LR
 | Secrets Manager | IAM 인증을 쓰면 피할 수 있음(SPEC 원칙) | 필요 없음(IAM 인증만 가능) |
 | 마이그레이션 실행 위치 | VPC 안(별도 Lambda나 bastion) | 운영자 PC |
 | DynamoDB·S3(3단계) | 게이트웨이 엔드포인트(무료) | Lambda가 VPC 밖이라 공용 엔드포인트로 접근(추가 비용 없음) |
-| 네트워크 격리 | DB가 VPC 안에만 있음 | DB 엔드포인트가 인터넷에서 보이지만 IAM 토큰 + TLS 없이는 접속할 수 없다 |
+| 네트워크 격리 | DB가 VPC 안에만 있고 보안 그룹으로 출발지를 제한 | DB 엔드포인트가 인터넷에서 보인다. 보안 그룹·서브넷·IP 허용 목록 같은 **네트워크 계층 통제가 없다**. Lambda가 VPC 밖이라 출발 IP가 고정되지 않아 IP 제한을 나중에 붙일 수도 없다. 인증 전 접속 시도(스캔·대입·연결 폭주)가 그대로 도달하고, **방어선은 IAM 인증 + TLS 한 겹**이다 |
 
-**결정 필요(사용자):** SPEC "실행" 표의 "Lambda는 전용 VPC의 프라이빗 서브넷에서 실행한다"와 "VPC 구성 원칙"(#7 결정)을 express 방식으로 바꿀지. 이 PR은 SPEC 원칙을 바꾸지 않았다. 승인하면 SPEC과 AGENTS의 AWS 대상 서비스 표를 같은 PR에서 고친다.
+**결정 필요(사용자):**
+1. SPEC "실행" 표의 "Lambda는 전용 VPC의 프라이빗 서브넷에서 실행한다"와 "VPC 구성 원칙"(#7 결정)을 express 방식으로 바꿀지. 받아들이면 위 표의 네트워크 격리 차이(방어선 한 겹)를 감수하는 것이다. 이 PR은 SPEC 원칙을 바꾸지 않았다. 승인하면 SPEC과 AGENTS의 AWS 대상 서비스 표를 같은 PR에서 고친다.
+2. Cognito 자가 가입을 열지. 현재 초안(`auth.yaml`)은 누구나 이메일로 가입할 수 있다. 가족 음성 자료를 다루므로 초대받은 사람만 가입하게 하려면 `AdminCreateUserConfig.AllowAdminCreateUserOnly`를 켜고 가입 경로를 따로 만들어야 한다.
+
+### 보안 요구사항 (express를 택할 때)
+
+- **TLS 검증**: `sslmode=verify-full`과 RDS 글로벌 CA 번들(Lambda 패키지에 포함)로 서버 인증서를 검증한다. `sslmode=require`는 인증서를 검증하지 않아 중간자가 15분짜리 IAM 토큰을 가로챌 수 있다.
+- **`rds-db:connect` 최소 권한**: Lambda 역할은 앱 사용자 하나(`dbuser:<cluster-resource-id>/<app-user>`)에만 허용하고 `dbuser:*`는 쓰지 않는다. 앱 사용자에게는 DDL 권한을 주지 않는다. 마이그레이션 사용자는 운영자 역할에만 허용하고, 운영자 PC 접속은 전용 IAM 역할이나 MFA 세션으로 한다. 마스터 사용자(`postgres`)는 앱·마이그레이션에 쓰지 않는다.
+- **합성 데이터만**: 보관·삭제 정책(umsal-pwa #19)이 정해지기 전에는 실제 사용자 자료를 넣지 않는다.
+- **생성 때 확인**: 인증에 실패한 연결 시도가 정지된 클러스터를 깨워 ACU를 과금하는지 확인한다. 그렇다면 스캔만으로 비용이 생길 수 있으므로 비용 경보를 함께 둔다.
 
 ## 3. 비용 견적 (ap-southeast-2)
 
@@ -52,7 +61,7 @@ flowchart LR
 | Lambda·API Gateway·CloudWatch Logs | 무료 제공량 | 소량, 로그 7일 | 약 0 |
 | **합계** | | | **약 USD 12~25** |
 
-- 남은 크레딧 USD 119.96(2027-04-30 만료) 기준으로 이 사용량이면 약 5~9개월이다.
+- 남은 크레딧 USD 119.96으로는 이 사용량에서 약 5~10개월치다. 다만 크레딧은 2027-04-30(오늘 기준 약 6개월 뒤)에 만료되므로, 사용량이 적으면 크레딧이 남은 채 만료되고 많으면 만료 전에 소진된다.
 - **최소 용량을 0.5 ACU 이상으로 두면 자동 정지가 꺼져** 쉬는 동안에도 과금된다(0.5 ACU × 720시간 × 0.20 = 월 약 USD 72). 발표 직전에만 올리고 끝나면 0으로 되돌린다(SPEC VPC 원칙 마지막 항목과 같은 취지).
 - 이 표는 견적이며 실제 청구는 AWS Settings > Billing에서 확인한다.
 
@@ -63,7 +72,7 @@ flowchart LR
 
 ## 4. 코드 변경 목록 (구현 PR에서)
 
-1. **IAM 토큰 접속**: `db.connect`가 `DATABASE_URL` 대신(또는 함께) `DB_HOST`·`DB_USER`·`DB_NAME`·리전으로 `rds.generate_db_auth_token`을 호출해 비밀번호로 쓰고 `sslmode=require`로 접속한다. 토큰은 15분 유효이므로 연결마다 새로 만든다. 로컬은 지금처럼 `DATABASE_URL`을 유지한다.
+1. **IAM 토큰 접속**: `db.connect`가 `DATABASE_URL` 대신(또는 함께) `DB_HOST`·`DB_USER`·`DB_NAME`·리전으로 `rds.generate_db_auth_token`을 호출해 비밀번호로 쓰고 `sslmode=verify-full`(RDS CA 번들)로 접속한다. 토큰은 15분 유효이므로 약 10분 캐시해 재사용하고, IAM 인증의 신규 연결 속도 한도를 연결 수와 함께 본다. 로컬은 지금처럼 `DATABASE_URL`을 유지한다. `db.py` docstring의 "Secrets Manager 주입" 서술도 고친다.
 2. **자동 정지 재개 지연**: 정지된 클러스터는 첫 연결에서 재개되며 수 초 이상 걸릴 수 있다. 현재 연결 제한 3초로는 503이 난다. 선택지: 연결 제한을 Lambda 제한(10초) 안에서 늘림, 또는 503 `retryable=true`를 그대로 두고 PWA가 재시도. 구현 PR에서 실측 후 정한다.
 3. **앱 DB 사용자**: 마스터 사용자(`postgres`) 대신 앱 전용 사용자를 만들고 `rds_iam` 역할과 필요한 권한만 준다. 마이그레이션은 운영자가 별도 사용자로 실행한다.
 4. **Lambda 설정**: `api.yaml`에 `COGNITO_USER_POOL_ID`·`COGNITO_APP_CLIENT_IDS`·DB 접속 환경 변수와 `rds-db:connect` 권한(`arn:aws:rds-db:<region>:<account>:dbuser:<cluster-resource-id>/<db-user>`)을 추가한다.
@@ -74,7 +83,7 @@ flowchart LR
 ## 5. 배포 순서 초안
 
 1. `umsal-backend-auth` 스택(Cognito) 생성 → 출력값(사용자 풀 ID·클라이언트 ID)을 PWA와 공유
-2. `umsal-backend-database` 스택(Aurora express) 생성 → `ServerlessV2ScalingConfiguration`이 express와 함께 받아들여지는지 확인(거부되면 템플릿에서 빼고 `modify-db-cluster`로 같은 값 적용)
+2. 생성 전 `validate-template`과 change set으로 템플릿을 한 번 더 확인한다(cfn-lint는 이 리소스의 알 수 없는 속성 검사를 끈 상태라 오타를 잡지 못한다). `umsal-backend-database` 스택(Aurora express)을 만들고 다음을 확인한다: `ServerlessV2ScalingConfiguration`이 express와 함께 받아들여지는지(거부되면 템플릿에서 빼고 `modify-db-cluster`로 같은 값 적용), writer 인스턴스가 자동으로 생기는지(`DBInstance` 리소스 불필요 여부), 기본 엔진 버전·저장 암호화·백업 보존 기간·로그 내보내기 기본값
 3. 운영자가 IAM 토큰으로 접속해 앱 사용자 생성, `alembic upgrade head`
 4. 구현 PR의 코드로 Lambda 재배포(환경 변수·권한 추가) → `/api/health/ready`의 `aurora: ok`, 합성 계정으로 `/api/me` 확인
 5. 정리 작업 스케줄 연결

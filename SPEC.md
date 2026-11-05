@@ -37,7 +37,6 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 
 2단계 설계 초안(#38, [docs/aws-stage2-design.md](docs/aws-stage2-design.md))은 Aurora express configuration으로 VPC를 쓰지 않는 구성을 제안한다. 사용자 결정 전까지 아래 원칙이 유효하다.
 
-
 - NAT 게이트웨이를 두지 않는 것을 기본으로 한다. DynamoDB·S3는 게이트웨이 VPC 엔드포인트(추가 요금 없음)로 연결한다.
 - Aurora 접속은 IAM 데이터베이스 인증을 우선 검토해 Secrets Manager 인터페이스 엔드포인트 비용을 피한다.
 - RDS Proxy는 DB 용량에 비례하는 추가 요금이 들므로 연결 수가 실제 문제가 될 때 도입한다. 도입 전에는 Lambda 동시성과 연결 수 한도를 함께 정한다.
