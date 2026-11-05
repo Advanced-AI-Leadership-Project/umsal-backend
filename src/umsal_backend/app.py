@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 from fastapi import FastAPI
 
-from umsal_backend import __version__, connections, consents, identity, invitations
+from umsal_backend import __version__, connections, consents, disconnect, identity, invitations
 from umsal_backend.auth import TokenVerifier
 from umsal_backend.db import database_url, readiness_probes_from_env
 from umsal_backend.errors import install_error_handlers
@@ -43,6 +43,7 @@ def create_app(
     app.include_router(connections.router)
     app.include_router(invitations.router)
     app.include_router(consents.router)
+    app.include_router(disconnect.router)
     return app
 
 
