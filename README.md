@@ -13,6 +13,20 @@ python3 tools/ai_workflow.py doctor # 원격·도구 버전·GitHub 인증 확�
 make api                            # http://127.0.0.1:8000/health, /api/health/live, /api/health/ready
 ```
 
+## 로컬 DB (PostgreSQL)
+
+Docker Desktop이 켜져 있어야 한다. DB는 `127.0.0.1:5434`에만 열리고 합성 데이터만 넣는다.
+
+```bash
+make db-up        # PostgreSQL 17 컨테이너 시작(healthy까지 대기)
+make db-migrate   # Alembic 마이그레이션 적용
+make db-test      # 실제 DB 통합 테스트(마이그레이션을 적용했다 되돌림)
+DATABASE_URL=postgresql://umsal:umsal_local@127.0.0.1:5434/umsal_backend make api
+make db-down      # 컨테이너 중지(데이터 볼륨은 유지)
+```
+
+`make`가 없는 Windows에서는 `docker compose up -d --wait db`, `uv run alembic upgrade head`처럼 Makefile의 명령을 직접 실행하고 `DATABASE_URL`(통합 테스트는 `TEST_DATABASE_URL`)을 환경 변수로 지정한다. `POSTGRES_PORT`·`POSTGRES_USER`·`POSTGRES_PASSWORD`를 바꿨다면 `make db-migrate LOCAL_DATABASE_URL=...`처럼 같은 값을 넘긴다. Alembic·SQLAlchemy는 개발 의존성이라 Lambda zip에 들어가지 않는다. `DATABASE_URL`이 없으면 API는 DB에 접속하지 않고 ready의 `checks.aurora`는 `not_configured`다. 새 마이그레이션은 `uv run alembic revision -m "설명"`으로 만들고 SQL을 직접 쓴다. Aurora 적용 전에는 `uv run alembic upgrade head --sql`로 SQL을 검토한다.
+
 ## 검사
 
 ```bash

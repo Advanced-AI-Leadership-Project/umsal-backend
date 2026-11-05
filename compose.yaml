@@ -1,0 +1,25 @@
+# Local development database only. Synthetic data; never point this at real user data.
+name: umsal-backend-local
+
+services:
+  db:
+    # PostgreSQL 17, the same major version planned for Aurora PostgreSQL (stage 2).
+    image: postgres:17.11-bookworm@sha256:839fbb5a4942a7758dd93e18b42ea5649807491a0545b5eeeb8f0b8bb11857a5
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-umsal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-umsal_local}
+      POSTGRES_DB: ${POSTGRES_DB:-umsal_backend}
+    ports:
+      # Loopback only. 5434 avoids the umsal-pwa local database on 5433.
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+volumes:
+  postgres_data:

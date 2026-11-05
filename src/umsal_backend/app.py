@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from umsal_backend import __version__
 from umsal_backend.auth import TokenVerifier
+from umsal_backend.db import readiness_probes_from_env
 from umsal_backend.errors import install_error_handlers
 from umsal_backend.health import DependencyName, Probe, create_health_router
 
@@ -15,7 +16,7 @@ _FROM_ENV = object()
 
 
 def create_app(
-    readiness_probes: Mapping[DependencyName, Probe] | None = None,
+    readiness_probes: Mapping[DependencyName, Probe] | None | object = _FROM_ENV,
     token_verifier: TokenVerifier | None | object = _FROM_ENV,
 ) -> FastAPI:
     app = FastAPI(title="UMSAL Backend", version=__version__)
@@ -32,7 +33,9 @@ def create_app(
         # DynamoDB or other dependencies; see /api/health/ready for those.
         return {"status": "ok", "version": __version__}
 
-    app.include_router(create_health_router(readiness_probes))
+    # DATABASE_URL enables the Aurora/PostgreSQL check; DynamoDB has no probe yet.
+    probes = readiness_probes_from_env() if readiness_probes is _FROM_ENV else readiness_probes
+    app.include_router(create_health_router(probes))
     return app
 
 
