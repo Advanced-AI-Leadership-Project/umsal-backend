@@ -22,3 +22,5 @@ make verify           # 위 검사 전체 = CI와 같은 suite
 ```
 
 PR 검사·자동 병합 구조는 [검증 하네스](docs/verification-harness.md)를 따른다.
+
+AWS 배포 절차와 확인 기록은 [백엔드 API AWS 배포](docs/aws-deployment.md)를 따른다.

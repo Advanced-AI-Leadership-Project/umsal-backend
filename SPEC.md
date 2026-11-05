@@ -48,7 +48,7 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 | `GET /health` | 구현. 배포 확인용. 프로세스 생존만 응답하며 Aurora·DynamoDB·S3 등 의존성 상태는 보증하지 않는다 |
 | `GET /api/health/live`·`GET /api/health/ready` | 구현(D2, #17). PWA와 같은 응답 모양. ready는 `checks.aurora`·`checks.dynamodb`를 따로 표시하고 둘 다 `ok`일 때만 `ready`(PWA 호환 `checks.database`도 그때만 `ok`). Aurora·DynamoDB 연결 확인은 아직 없어 `not_configured`로 응답하므로 현재 ready는 항상 503 `not_ready`다 |
 | Lambda 핸들러 | 구현. 합성 API Gateway HTTP API v2 이벤트로만 테스트했다 |
-| AWS 배포(IaC)·VPC | 미구현 |
+| AWS 배포(IaC) | 1단계 구현(#19). API Gateway HTTP API + Lambda를 CloudFormation으로 배포했고 배포 주소의 health 응답을 확인했다([배포 문서](docs/aws-deployment.md)). VPC·Aurora·DynamoDB·S3·Cognito·CloudFront 연결은 미구현 |
 | 인증·동의·분석 | 미구현 |
 | Aurora·DynamoDB·S3 저장 | 미구현 |
 | PWA 연동 | health 경로만 PWA 계약에 맞춤. 업무 API와 실제 연결 확인은 미구현 |

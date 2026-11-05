@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  UMSAL backend API stage 1 (stack umsal-backend-api). HTTP API -> Lambda running the
+  FastAPI app. No VPC, database, user authentication or CloudFront wiring yet; only the
+  health endpoints are implemented.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/aws-deployment.md, ../../SPEC.md]
+    must:
+      - Regional resources in the selected Region (ap-southeast-2) only
+      - Do not modify umsal-pwa stacks or its CloudFront distribution from this stack
+      - No secrets in parameters, environment variables or logs
+Parameters:
+  ArtifactBucket:
+    Type: String
+    Description: Bucket name output by the umsal-backend-bootstrap stack
+  ArtifactKey:
+    Type: String
+    Description: S3 key of the Lambda zip (lambda/<commit-sha>.zip)
+    AllowedPattern: '^lambda/[0-9a-f]{40}\.zip$'
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev]
+    Description: Value reported by /api/health/* as environment
+Resources:
+  FunctionLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-api'
+      RetentionInDays: 7
+  ApiLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Stage 1 touches no AWS data service; the role may only write its own logs.
+        must: [Add data-store permissions per resource ARN when Aurora/DynamoDB/S3 are added]
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {'aws:SourceAccount': !Ref AWS::AccountId}
+      Policies:
+        - PolicyName: OwnLogsOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt FunctionLog.Arn
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Small bursty requests; no provisioned concurrency, NAT or VPC in stage 1.
+        must: [Mangum handler umsal_backend.lambda_handler.handler, Linux x86_64 wheels only]
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: umsal_backend.lambda_handler.handler
+      MemorySize: 256
+      Timeout: 10
+      ReservedConcurrentExecutions: 5
+      Role: !GetAtt FunctionRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ArtifactKey}
+      LoggingConfig:
+        LogGroup: !Ref FunctionLog
+      Environment:
+        Variables:
+          UMSAL_ENV: !Ref Environment
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-http'
+      ProtocolType: HTTP
+      Tags: {Project: umsal-backend}
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 10000
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Throttling limits accidental cost; it is not an absolute spend cap.
+        must: [Access log carries no headers, body, query string or source IP]
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+      DefaultRouteSettings: {ThrottlingBurstLimit: 10, ThrottlingRateLimit: 5}
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiLog.Arn
+        Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength"}'
+  ApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiFunction
+      Principal: apigateway.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+  ErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Backend API Lambda errors; console state only, no notification subscription.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{Name: FunctionName, Value: !Ref ApiFunction}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+Outputs:
+  ApiEndpoint:
+    Description: Direct HTTP API URL (not yet behind the PWA CloudFront)
+    Value: !GetAtt HttpApi.ApiEndpoint
+  FunctionName:
+    Value: !Ref ApiFunction
