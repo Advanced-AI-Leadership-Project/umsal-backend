@@ -57,7 +57,7 @@ def migrated_db(test_database_url, monkeypatch):
         patched.setenv("DATABASE_URL", test_database_url)  # read by migrations/env.py
         command.upgrade(Config(str(ROOT / "alembic.ini")), "head")
     with psycopg.connect(test_database_url, autocommit=True) as connection:
-        connection.execute("TRUNCATE users, connections CASCADE")
+        connection.execute("TRUNCATE users, connections, invitations, idempotency_keys CASCADE")
     return test_database_url
 
 
