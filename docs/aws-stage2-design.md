@@ -1,6 +1,6 @@
 # 2단계 AWS 설계: VPC·RDS PostgreSQL·Cognito
 
-기준일: 2026-11-05 · 이슈 #38(초안), #40(VPC 확정) · **설계와 견적만 담았다. AWS 자원은 만들지 않았다.** 생성은 사용자가 확인한 뒤 별도 작업에서 한다.
+기준일: 2026-11-05 · 이슈 #38(초안), #40(VPC 확정) · 설계와 견적을 담는다. **2026-11-05에 사용자 확인을 받아 배포했다**(#49). 실제 순서와 결과는 [aws-deployment.md](aws-deployment.md#2단계-배포-기록)에 있다.
 
 **결정(2026-11-05, 사용자):** SPEC의 기존 원칙대로 **VPC 방식**을 쓴다. Lambda와 DB를 전용 VPC의 프라이빗 서브넷에 둔다. #38에서 제안한 Aurora express configuration(VPC 없음)은 네트워크 방어선이 IAM 한 겹뿐이라 채택하지 않았다(아래 "버린 대안").
 
@@ -87,7 +87,7 @@ flowchart LR
 
 ## 4. 코드 변경 목록
 
-**구현(#42):** 1·2·5·6 항목과 정리 작업 스케줄을 코드와 템플릿(`api.yaml` 선택 파라미터, `jobs.yaml`, `build_lambda.py --kind migrate`, `stage2_params.py`)으로 구현했다. **#44:** 4(사용자 생성)를 일회용 `db-bootstrap` 스택으로 구현했다. 8(CloudFront)은 umsal-pwa와 정한 뒤 한다. AWS에는 아직 배포하지 않았다.
+**구현(#42):** 1·2·5·6 항목과 정리 작업 스케줄을 코드와 템플릿(`api.yaml` 선택 파라미터, `jobs.yaml`, `build_lambda.py --kind migrate`, `stage2_params.py`)으로 구현했다. **#44:** 4(사용자 생성)를 일회용 `db-bootstrap` 스택으로 구현했다. 8(CloudFront)은 umsal-pwa와 정한 뒤 한다. 2026-11-05 AWS 배포 완료(6절).
 
 
 1. **IAM 토큰 접속**: `db.connect`가 `DB_HOST`·`DB_USER`·`DB_NAME`·리전으로 `rds.generate_db_auth_token`을 호출해 비밀번호로 쓰고 `sslmode=verify-full`로 접속한다. 토큰은 약 10분 캐시하고, IAM 인증의 신규 연결 속도 한도를 연결 수와 함께 본다. 로컬은 지금처럼 `DATABASE_URL`을 유지한다. `db.py` docstring의 "Secrets Manager 주입" 서술을 고친다.
@@ -121,7 +121,8 @@ JWKS를 배포 때 고정하므로 Cognito가 서명 키를 바꾸면 **새 키�
 
 ## 6. 검증 상태
 
-- `infra/aws/network.yaml`·`database.yaml`·`auth.yaml`: cfn-lint 1.59.0 통과. 실제 생성·배포·접속은 하지 않았다.
+- `infra/aws/network.yaml`·`database.yaml`·`auth.yaml`: cfn-lint 1.59.0 통과.
+- 2026-11-05 실제 생성·배포·접속 완료(5절 1~6). `/api/health/ready`의 `aurora: ok`와 합성 계정 `/api/me` 200을 확인했다. 기록은 [aws-deployment.md](aws-deployment.md#2단계-배포-기록). 7(정리 Lambda·스케줄)은 `umsal-backend-jobs` 스택으로 함께 만들었고 정기 실행 결과는 아직 확인하지 않았다.
 - RDS for PostgreSQL 17.11 가용 여부는 `aws rds describe-db-engine-versions --engine postgres`(읽기 전용)로 확인했다. 템플릿은 `aws cloudformation validate-template`를 통과했다(#44).
 
 ## 7. 버린 대안: Aurora express configuration (#38 초안)
