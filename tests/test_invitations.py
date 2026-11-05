@@ -133,12 +133,19 @@ def test_accept_creates_active_connection_visible_to_both(client, contract_schem
         assert [item["connection_id"] for item in page["items"]] == [connection["connection_id"]]
 
 
-def test_accept_does_not_create_any_grant(client, migrated_db):
+def test_accept_allows_nothing(client, migrated_db):
     ticket = _invite(client).json()
-    _accept(client, ticket["invitation_id"], ticket["invite_code"])
+    connection_id = _accept(client, ticket["invitation_id"], ticket["invite_code"]).json()[
+        "connection_id"
+    ]
     with psycopg.connect(migrated_db) as connection:
-        grants = connection.execute("SELECT to_regclass('consent_grants')").fetchone()[0]
-    assert grants is None  # FR-02: accepting is not consent; no grant table exists yet
+        grants = connection.execute(
+            "SELECT version, analysis_allowed, sharing_scopes, verification_preview_allowed "
+            "FROM consent_grants WHERE connection_id = %s",
+            (connection_id,),
+        ).fetchall()
+    # FR-02: accepting is not consent. Both directions exist and are fully denied.
+    assert grants == [(1, False, [], False), (1, False, [], False)]
 
 
 def test_code_is_case_and_separator_insensitive(client):

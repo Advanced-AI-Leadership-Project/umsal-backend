@@ -2,7 +2,7 @@
 
 The inviter creates an expiring code and shares it together with the invitation id.
 The invitee accepts with the code, which creates an ACTIVE connection. Accepting does
-not create any analysis or sharing grant (FR-02: grants are stored separately).
+not allow any analysis or sharing (FR-02): both grant rows start fully denied.
 
 Only SHA-256(code) is stored on the invitation. A wrong code answers 404 exactly like an
 unknown invitation, so the id alone does not confirm that an invitation exists.
@@ -21,6 +21,7 @@ from fastapi import APIRouter, Path
 from pydantic import BaseModel, Field
 
 from umsal_backend.connections import ID_PATTERN, Connection, load_connection
+from umsal_backend.consents import create_default_grants
 from umsal_backend.db import Db
 from umsal_backend.errors import ApiError
 from umsal_backend.idempotency import IdempotencyKey, run_idempotent
@@ -34,7 +35,7 @@ CODE_ATTEMPTS = 3
 
 
 class InvitationRequest(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "strict": True}
     demo: bool | None = None
 
 
@@ -45,7 +46,7 @@ class InvitationTicket(BaseModel):
 
 
 class AcceptInvitation(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "strict": True}
     invite_code: str = Field(min_length=6, max_length=64)
     demo: bool | None = None
 
@@ -164,6 +165,8 @@ def accept_invitation(
             "WHERE id = %s",
             (user.user_id, connection_id, invitation_id),
         )
+        # Accepting is not consent (FR-02): both directions start fully denied.
+        create_default_grants(db, connection_id, inviter_id, user.user_id)
         return 200, load_connection(db, connection_id, user.user_id)
 
     return run_idempotent(
