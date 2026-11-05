@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   UMSAL backend API (stack umsal-backend-api). HTTP API -> Lambda running the FastAPI app.
   Stage 1 (deployed): no VPC, no database, no Cognito. Stage 2 (#42, not deployed): the
-  optional parameters below put the Lambda in the private VPC with Aurora IAM auth and
+  optional parameters below put the Lambda in the private VPC with RDS PostgreSQL IAM auth and
   Cognito verification using a JWKS document fixed at deploy time.
 Metadata:
   # W1030 only: cfn-lint resolves the empty stage-1 default of LambdaSecurityGroupId
@@ -47,11 +47,11 @@ Parameters:
   DbHost:
     Type: String
     Default: ''
-    Description: Stage 2. ClusterEndpoint output of umsal-backend-database (empty = no DB)
-  DbClusterResourceId:
+    Description: Stage 2. DbEndpoint output of umsal-backend-database (empty = no DB)
+  DbResourceId:
     Type: String
     Default: ''
-    Description: Stage 2. ClusterResourceId output of umsal-backend-database
+    Description: Stage 2. DbResourceId output of umsal-backend-database (db-...)
   DbUser:
     Type: String
     Default: umsal_app
@@ -86,9 +86,9 @@ Rules:
     RuleCondition: !Not [!Equals [!Ref DbHost, '']]
     Assertions:
       - Assert: !Not [!Equals [!Ref SubnetIds, '']]
-        AssertDescription: Aurora is private; DbHost requires SubnetIds
-      - Assert: !Not [!Equals [!Ref DbClusterResourceId, '']]
-        AssertDescription: DbHost requires DbClusterResourceId for rds-db:connect
+        AssertDescription: The database is private; DbHost requires SubnetIds
+      - Assert: !Not [!Equals [!Ref DbResourceId, '']]
+        AssertDescription: DbHost requires DbResourceId for rds-db:connect
   CognitoNeedsJwks:
     RuleCondition: !Not [!Equals [!Ref CognitoUserPoolId, '']]
     Assertions:
@@ -147,13 +147,13 @@ Resources:
           - !Ref AWS::NoValue
         - !If
           - UseDatabase
-          - PolicyName: AuroraAppUserOnly
+          - PolicyName: DatabaseAppUserOnly
             PolicyDocument:
               Version: '2012-10-17'
               Statement:
                 - Effect: Allow
                   Action: rds-db:connect
-                  Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbClusterResourceId}/${DbUser}'
+                  Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbResourceId}/${DbUser}'
           - !Ref AWS::NoValue
   ApiFunction:
     Type: AWS::Lambda::Function
@@ -186,7 +186,7 @@ Resources:
           DB_HOST: !If [UseDatabase, !Ref DbHost, !Ref AWS::NoValue]
           DB_USER: !If [UseDatabase, !Ref DbUser, !Ref AWS::NoValue]
           DB_NAME: !If [UseDatabase, umsal, !Ref AWS::NoValue]
-          # Aurora may be resuming from auto-pause; still well inside the 15s timeout.
+          # Generous connect timeout, still well inside the 15s Lambda timeout.
           DB_CONNECT_TIMEOUT: !If [UseDatabase, '8', !Ref AWS::NoValue]
           COGNITO_USER_POOL_ID: !If [UseCognito, !Ref CognitoUserPoolId, !Ref AWS::NoValue]
           COGNITO_APP_CLIENT_IDS: !If [UseCognito, !Ref CognitoAppClientIds, !Ref AWS::NoValue]

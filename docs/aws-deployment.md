@@ -76,9 +76,9 @@ DB·NAT·VPC가 없어 소량 요청은 무료 제공량 안에 든다. 실제 �
 
 ## 다음 단계
 
-- 2단계: [aws-stage2-design.md](aws-stage2-design.md)(VPC·Aurora·Cognito, 비용 견적). 코드·템플릿은 #42에서 준비했고 실제 생성은 사용자 확인 후 한다. 준비된 절차(요약):
+- 2단계: [aws-stage2-design.md](aws-stage2-design.md)(VPC·RDS PostgreSQL·Cognito, 비용 견적). 코드·템플릿은 #42에서 준비했고 실제 생성은 사용자 확인 후 한다. 준비된 절차(요약):
   1. `auth.yaml`·`network.yaml`·`database.yaml` 스택 생성(각각 change set 확인)
-  2. `EnableDataApi=true`로 갱신 → [infra/aws/bootstrap_users.sql](../infra/aws/bootstrap_users.sql)의 문장을 `aws rds-data execute-statement`로 하나씩 실행(`umsal_migrator`는 스키마 소유, `umsal_app`은 행 읽기·쓰기만, 둘 다 `rds_iam`, 기본 권한으로 이후 테이블에 앱 권한 부여) → `EnableDataApi=false`
+  2. `stage2_params.py`로 파라미터 파일을 만든 뒤 일회용 `umsal-backend-db-bootstrap` 스택([db-bootstrap.yaml](../infra/aws/db-bootstrap.yaml)) 생성 → `aws lambda invoke`로 [bootstrap_users.sql](../src/umsal_backend/sql/bootstrap_users.sql) 실행(`umsal_migrator` 스키마 소유, `umsal_app` 행 읽기·쓰기만) → 스택 삭제
   3. `python infra/aws/build_lambda.py`와 `--kind migrate`로 두 zip을 만들어 artifact 버킷에 올림
   4. `python infra/aws/stage2_params.py --api-key … --migrate-key …`로 파라미터 파일 생성(Cognito JWKS를 이때 받아 고정)
   5. `jobs.yaml` 배포 → `aws lambda invoke`로 마이그레이션 실행 → `api.yaml`을 `--parameter-overrides file://.local/stage2/api-params.json`으로 갱신
