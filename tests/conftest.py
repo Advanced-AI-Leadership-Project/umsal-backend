@@ -73,6 +73,53 @@ def migrated_db(test_database_url, monkeypatch):
     return test_database_url
 
 
+CONCURRENCY_TIMEOUT_SECONDS = 30
+
+
+def _run_concurrently(*targets, timeout: float = CONCURRENCY_TIMEOUT_SECONDS) -> None:
+    """Start ``targets`` together on daemon threads and fail instead of hanging.
+
+    Each target receives no arguments and is released at the same moment by a barrier.
+    A barrier that never fills, a thread that never finishes, or an exception inside a
+    thread becomes a test failure naming the target, so CI cannot stall until the job
+    timeout (main verification of ad32e45 hung for 15 minutes, issue #48).
+    """
+    import threading
+    import time
+
+    barrier = threading.Barrier(len(targets), timeout=timeout)
+    errors: list[tuple[str, BaseException]] = []
+
+    def wrap(target):
+        def run() -> None:
+            try:
+                barrier.wait()
+                target()
+            except BaseException as error:  # reported to the test below
+                errors.append((target.__name__, error))
+
+        return run
+
+    threads = [threading.Thread(target=wrap(t), name=t.__name__, daemon=True) for t in targets]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + timeout
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    stuck = [thread.name for thread in threads if thread.is_alive()]
+    if stuck:
+        pytest.fail(f"concurrent targets did not finish within {timeout}s: {stuck}")
+    if errors:
+        name, error = errors[0]
+        raise AssertionError(f"concurrent target {name!r} raised {error!r}") from error
+
+
+@pytest.fixture
+def run_concurrently():
+    """Run callables at the same time with a hard timeout (see ``_run_concurrently``)."""
+    return _run_concurrently
+
+
 @pytest.fixture(scope="session")
 def contract_schema():
     """Validator factory for components in contracts/openapi.yaml (no network)."""

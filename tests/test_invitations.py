@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import threading
 
 import psycopg
 import pytest
@@ -235,22 +234,25 @@ def test_malformed_accept_requests_are_422(client):
     )
 
 
-def test_concurrent_accepts_create_one_connection(client, migrated_db):
+def test_concurrent_accepts_create_one_connection(client, migrated_db, run_concurrently):
     ticket = _invite(client).json()
     results: list[int] = []
-    barrier = threading.Barrier(2)
 
-    def accept(sub: str):
-        barrier.wait()
+    def accept_racer_1():
         results.append(
-            _accept(client, ticket["invitation_id"], ticket["invite_code"], sub=sub).status_code
+            _accept(
+                client, ticket["invitation_id"], ticket["invite_code"], sub="racer-1"
+            ).status_code
         )
 
-    threads = [threading.Thread(target=accept, args=(s,)) for s in ("racer-1", "racer-2")]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    def accept_racer_2():
+        results.append(
+            _accept(
+                client, ticket["invitation_id"], ticket["invite_code"], sub="racer-2"
+            ).status_code
+        )
+
+    run_concurrently(accept_racer_1, accept_racer_2)
     assert sorted(results) == [200, 409]
     with psycopg.connect(migrated_db) as connection:
         assert connection.execute("SELECT count(*) FROM connections").fetchone() == (1,)
@@ -322,19 +324,13 @@ def test_disconnected_pair_can_reconnect_with_new_invitation(client, migrated_db
     assert response.json()["status"] == "ACTIVE"
 
 
-def test_concurrent_same_key_creates_one_invitation(client, migrated_db):
+def test_concurrent_same_key_creates_one_invitation(client, migrated_db, run_concurrently):
     responses: list[dict] = []
-    barrier = threading.Barrier(2)
 
     def create():
-        barrier.wait()
         responses.append(_invite(client, key="race-key-123").json())
 
-    threads = [threading.Thread(target=create) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    run_concurrently(create, create)
     assert responses[0] == responses[1]
     with psycopg.connect(migrated_db) as connection:
         assert connection.execute("SELECT count(*) FROM invitations").fetchone() == (1,)
