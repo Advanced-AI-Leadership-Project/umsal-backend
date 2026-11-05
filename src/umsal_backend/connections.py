@@ -13,6 +13,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Literal
 
+import psycopg
 from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field
 
@@ -112,9 +113,14 @@ def get_connection(
     db: Db,
     connection_id: Annotated[str, Path(pattern=ID_PATTERN)],
 ) -> Connection:
+    return load_connection(db, connection_id, user.user_id)
+
+
+def load_connection(db: psycopg.Connection, connection_id: str, user_id: str) -> Connection:
+    """The connection if ``user_id`` participates in it, else 404 (existence hidden)."""
     row = db.execute(
         _SELECT + " WHERE c.id = %(id)s AND (c.user_a_id = %(me)s OR c.user_b_id = %(me)s)",
-        {"id": connection_id, "me": user.user_id},
+        {"id": connection_id, "me": user_id},
     ).fetchone()
     if row is None:
         raise ApiError(404, "NOT_FOUND", "The resource was not found.")
