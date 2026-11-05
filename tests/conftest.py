@@ -67,11 +67,73 @@ def migrated_db(test_database_url, monkeypatch):
     with monkeypatch.context() as patched:
         patched.setenv("DATABASE_URL", test_database_url)  # read by migrations/env.py
         command.upgrade(Config(str(ROOT / "alembic.ini")), "head")
-    with psycopg.connect(test_database_url, autocommit=True) as connection:
-        connection.execute(
-            "TRUNCATE users, connections, invitations, idempotency_keys, consent_grants CASCADE"
-        )
-    return test_database_url
+    with _admin_connection(test_database_url) as connection:
+        try:
+            connection.execute(
+                "TRUNCATE users, connections, invitations, idempotency_keys, consent_grants CASCADE"
+            )
+        except psycopg.errors.LockNotAvailable:
+            # main verification of cdf46da waited here for 13 minutes (#56).
+            pytest.fail(
+                f"TRUNCATE waited over {LOCK_TIMEOUT_MS} ms for a table lock. "
+                f"Previous test: {_LAST_TEST['nodeid']}. "
+                f"Other sessions: {_other_sessions(connection)}",
+                pytrace=False,
+            )
+    yield test_database_url
+    _fail_on_leaked_transactions(test_database_url)
+
+
+LOCK_TIMEOUT_MS = 10_000
+LEAK_GRACE_SECONDS = 3.0
+_LAST_TEST: dict[str, str | None] = {"nodeid": None}
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    yield
+    _LAST_TEST["nodeid"] = item.nodeid
+
+
+def _admin_connection(url: str):
+    """Fixture-side connection that fails instead of waiting forever on a lock."""
+    import psycopg
+
+    return psycopg.connect(
+        url,
+        autocommit=True,
+        connect_timeout=5,
+        options=f"-c lock_timeout={LOCK_TIMEOUT_MS} -c statement_timeout=60000",
+    )
+
+
+def _other_sessions(connection) -> list[tuple]:
+    return connection.execute(
+        "SELECT pid, state, now() - xact_start AS xact_age, left(query, 160) "
+        "FROM pg_stat_activity "
+        "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+        "AND backend_type = 'client backend' ORDER BY xact_start NULLS LAST"
+    ).fetchall()
+
+
+def _fail_on_leaked_transactions(url: str) -> None:
+    """A test must not leave a session idle inside an open transaction.
+
+    Such a session keeps its row/table locks, so the next test's TRUNCATE blocks. This
+    names the leaking test directly instead of hanging in the following one (#56).
+    Connections may still be closing on worker threads, so allow a short grace period.
+    """
+    import time
+
+    deadline = time.monotonic() + LEAK_GRACE_SECONDS
+    with _admin_connection(url) as connection:
+        while True:
+            leaked = [s for s in _other_sessions(connection) if s[1] == "idle in transaction"]
+            if not leaked or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+    if leaked:
+        pytest.fail(f"test left sessions idle in a transaction: {leaked}", pytrace=False)
 
 
 CONCURRENCY_TIMEOUT_SECONDS = 30
