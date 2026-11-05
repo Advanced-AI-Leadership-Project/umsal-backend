@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  TEMPORARY (stack umsal-backend-db-bootstrap). Creates the IAM-authenticated database
+  users once: a Secrets Manager interface endpoint (so the VPC Lambda can read the RDS
+  master secret) and a bootstrap Lambda. Invoke it once, then delete this stack so the
+  endpoint stops billing (about USD 0.013 per hour per AZ).
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/aws-stage2-design.md]
+    must:
+      - Delete this stack right after a successful bootstrap run
+      - The function may read only the RDS master secret; it logs only role names
+Parameters:
+  ArtifactBucket:
+    Type: String
+  ArtifactKey:
+    Type: String
+    Description: Migration zip (contains psycopg, boto3 and the RDS CA bundle)
+    AllowedPattern: '^lambda/[0-9a-f]{40}-migrate\.zip$'
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DbHost:
+    Type: String
+    MinLength: 1
+  MasterSecretArn:
+    Type: String
+    AllowedPattern: '^arn:aws:secretsmanager:ap-southeast-2:\d{12}:secret:.+$'
+Resources:
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Temporary Secrets Manager endpoint (HTTPS from backend Lambdas)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: HTTPS from backend Lambdas
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref LambdaSecurityGroupId
+      SecurityGroupEgress:
+        - Description: No outbound traffic needed
+          IpProtocol: '-1'
+          CidrIp: 127.0.0.1/32
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      PrivateDnsEnabled: true
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: secretsmanager:GetSecretValue
+            Resource: !Ref MasterSecretArn
+  BootstrapLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}'
+      RetentionInDays: 7
+  BootstrapRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {'aws:SourceAccount': !Ref AWS::AccountId}
+      Policies:
+        - PolicyName: BootstrapMinimal
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt BootstrapLog.Arn
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'  # ENI actions do not support resource-level scoping
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref MasterSecretArn
+  BootstrapFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SecretsManagerEndpoint
+    Properties:
+      FunctionName: !Ref AWS::StackName
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: umsal_backend.db_bootstrap.handler
+      MemorySize: 256
+      Timeout: 60
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt BootstrapRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ArtifactKey}
+      LoggingConfig:
+        LogGroup: !Ref BootstrapLog
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+      Environment:
+        Variables:
+          DB_HOST: !Ref DbHost
+          DB_NAME: umsal
+          DB_MASTER_SECRET_ARN: !Ref MasterSecretArn
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+Outputs:
+  BootstrapFunctionName:
+    Value: !Ref BootstrapFunction

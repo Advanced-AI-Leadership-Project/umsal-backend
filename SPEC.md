@@ -18,7 +18,7 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 
 ## 저장 계층
 
-2026-11-04 사용자 결정, 2026-11-05 작업 상태 배치 변경(API 계약 초안 D5). 엔진 버전·용량·스키마는 후속 이슈에서 정한다.
+2026-11-04 사용자 결정, 2026-11-05 작업 상태 배치 변경(API 계약 초안 D5). **2026-11-05 사용자 결정(#44): 관계형 저장소는 Aurora PostgreSQL 대신 VPC 안 RDS for PostgreSQL 17을 쓴다**(Free 플랜에서는 Aurora를 VPC 없는 express로만 만들 수 있다). 이 문서와 코드의 'Aurora'(예: ready 응답의 `checks.aurora`, 계약 필드라 이름 유지)는 이 관계형 PostgreSQL 저장소를 뜻한다.
 
 | 저장소 | 저장 내용 | 선택 이유 |
 |---|---|---|
@@ -41,7 +41,7 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 - Aurora 접속은 IAM 데이터베이스 인증을 우선 검토해 Secrets Manager 인터페이스 엔드포인트 비용을 피한다.
 - RDS Proxy는 DB 용량에 비례하는 추가 요금이 들므로 연결 수가 실제 문제가 될 때 도입한다. 도입 전에는 Lambda 동시성과 연결 수 한도를 함께 정한다.
 - 게이트웨이 엔드포인트가 없는 AWS 서비스(SQS·KMS 등)를 VPC 안에서 쓰게 되면 인터페이스 엔드포인트 비용을 해당 설계에 포함한다.
-- 발표·체험 기간처럼 재개 지연을 피해야 할 때만 Aurora 최소 용량을 올리고 끝나면 되돌린다.
+- RDS PostgreSQL은 자동 정지가 없어 항상 과금된다. 오래 쓰지 않을 때는 수동으로 정지한다(7일 뒤 자동 재시작).
 - VPC 안 Lambda는 인터넷에 나가지 않는다. Cognito JWKS는 배포 때 받아 Lambda 설정에 고정하고(키 교체 시 재배포), 마이그레이션은 VPC 안 전용 Lambda로 실행한다(#40).
 
 ## 현재 구현 상태
@@ -52,7 +52,7 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 | `GET /api/health/live`·`GET /api/health/ready` | 구현(D2, #17). PWA와 같은 응답 모양. ready는 `checks.aurora`·`checks.dynamodb`를 따로 표시하고 둘 다 `ok`일 때만 `ready`(PWA 호환 `checks.database`도 그때만 `ok`). Aurora·DynamoDB 연결 확인은 아직 없어 `not_configured`로 응답하므로 현재 ready는 항상 503 `not_ready`다 |
 | Lambda 핸들러 | 구현. 합성 API Gateway HTTP API v2 이벤트로만 테스트했다 |
 | AWS 배포(IaC) | 1단계 구현(#19). API Gateway HTTP API + Lambda를 CloudFormation으로 배포했고 배포 주소의 health 응답을 확인했다([배포 문서](docs/aws-deployment.md)). VPC·Aurora·DynamoDB·S3·Cognito·CloudFront 연결은 미구현 |
-| 2단계 AWS 준비 | 코드·템플릿 구현(#42), **미배포**. Aurora IAM 토큰 접속(verify-full TLS, 토큰 10분 재사용), 배포 때 고정한 Cognito JWKS(없으면 시작 시 오류), 마이그레이션 Lambda, 정리 작업 스케줄, `api.yaml` 선택 파라미터(비우면 1단계 그대로), `jobs.yaml`, `network.yaml`·`database.yaml`·`auth.yaml` 초안. 실제 생성은 사용자 확인 후 |
+| 2단계 AWS 준비 | 코드·템플릿 구현(#42), **미배포**. IAM 토큰 DB 접속(verify-full TLS, 토큰 10분 재사용), 배포 때 고정한 Cognito JWKS(없으면 시작 시 오류), 마이그레이션 Lambda, 정리 작업 스케줄, `api.yaml` 선택 파라미터(비우면 1단계 그대로), `jobs.yaml`, `network.yaml`·`database.yaml`(RDS PostgreSQL, #44)·`auth.yaml`·일회용 `db-bootstrap.yaml`. Cognito·VPC 생성 완료(2026-11-05), DB 이후는 진행 중 |
 | 사용자 인증 | Cognito access token 검증 의존성 구현(D3, #21). 합성 키·토큰으로만 테스트했다. 사용자 풀이 없고 배포 환경에 설정이 없어 인증이 필요한 경로는 503으로 막힌다 |
 | 사용자·관계 조회 | `GET /api/me`(인증된 첫 성공 요청에서 사용자 생성, 실패한 요청의 트랜잭션은 되돌림), `GET /api/connections`(cursor 페이지), `GET /api/connections/{id}`(비참여자 404) 구현(#29). `users`·`connections` 마이그레이션 `0002`. 실제 PostgreSQL 테스트만 거쳤고 AWS에는 미배포. 표시 이름은 빈 문자열(D10) |
 | 초대 | `POST /api/invitations`(24시간 유효 코드, 해시만 저장), `POST /api/invitations/{id}/accept`(ACTIVE 관계 생성, 1회 수락, 동시 수락 방지) 구현(#31). 두 경로 모두 `Idempotency-Key` 필수(같은 요청 재전송, 다른 요청 409). 마이그레이션 `0003`. 실제 PostgreSQL 테스트만 거쳤고 AWS 미배포. 요청 한도(429) 미구현. 만료 기록·만료 미수락 초대 정리 작업 `python -m umsal_backend.maintenance`(#36)는 있으나 주기 실행은 2단계 배포 때 연결 |

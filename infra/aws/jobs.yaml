@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   DRAFT (not deployed, #42). UMSAL backend jobs inside the private VPC (stack
   umsal-backend-jobs): the migration Lambda (operator-invoked, not behind API Gateway)
-  and the daily maintenance purge (EventBridge Scheduler). Both use Aurora IAM auth.
+  and the daily maintenance purge (EventBridge Scheduler). Both use RDS PostgreSQL IAM auth.
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -31,7 +31,7 @@ Parameters:
   DbHost:
     Type: String
     MinLength: 1
-  DbClusterResourceId:
+  DbResourceId:
     Type: String
     MinLength: 1
   AppDbUser:
@@ -83,7 +83,7 @@ Resources:
                 Resource: '*'  # ENI actions do not support resource-level scoping
               - Effect: Allow
                 Action: rds-db:connect
-                Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbClusterResourceId}/${MigrationDbUser}'
+                Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbResourceId}/${MigrationDbUser}'
   MaintenanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -114,12 +114,12 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action: rds-db:connect
-                Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbClusterResourceId}/${AppDbUser}'
+                Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbResourceId}/${AppDbUser}'
   MigrationFunction:
     Type: AWS::Lambda::Function
     Metadata:
       com.aws.cloudformation.Context:
-        why: Aurora is private and the operator machine cannot reach it.
+        why: The database is private and the operator machine cannot reach it.
         must: [Logs only revision identifiers, Not connected to API Gateway]
     Properties:
       FunctionName: !Sub '${AWS::StackName}-migrate'

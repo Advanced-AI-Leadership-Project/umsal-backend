@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  DRAFT (not deployed, #40). UMSAL backend Aurora PostgreSQL serverless cluster inside the
-  private VPC (stack umsal-backend-database): IAM database authentication for the app and
-  migrations, scale to zero when idle, not publicly accessible.
+  UMSAL backend PostgreSQL (stack umsal-backend-database): RDS for PostgreSQL 17 inside the
+  private VPC, IAM database authentication for the app and migrations, not publicly
+  accessible. Aurora was not used because Free plan accounts may create Aurora only with
+  express configuration (no VPC); see docs/aws-stage2-design.md (#44).
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -22,37 +23,17 @@ Parameters:
   EngineVersion:
     Type: String
     Default: '17.11'
-    Description: Matches the local Docker image; supports MinCapacity 0 (checked 2026-11-05)
-  MaxCapacity:
-    Type: Number
-    Default: 4
-    MinValue: 1
-    MaxValue: 4
-    Description: Free plan allows up to 4 ACUs per cluster
-  SecondsUntilAutoPause:
-    Type: Number
-    Default: 300
-    MinValue: 300
-    MaxValue: 86400
-  EnableDataApi:
+    Description: Matches the local Docker image (available in ap-southeast-2, 2026-11-05)
+  InstanceClass:
     Type: String
-    Default: 'false'
-    AllowedValues: ['true', 'false']
-    Description: >-
-      Turn on only for the one-time user bootstrap (rds-data execute-statement with the
-      master secret from the operator's machine), then turn off again.
-Conditions:
-  DataApiOn: !Equals [!Ref EnableDataApi, 'true']
+    Default: db.t4g.micro
+    AllowedValues: [db.t4g.micro, db.t4g.small]
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 100
 Resources:
-  ClusterParameters:
-    Type: AWS::RDS::DBClusterParameterGroup
-    Properties:
-      Description: UMSAL Aurora PostgreSQL 17 cluster parameters
-      Family: aurora-postgresql17
-      Parameters:
-        rds.force_ssl: '1'  # explicit, not relying on the engine default
-      Tags:
-        - {Key: Project, Value: umsal-backend}
   SubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
@@ -60,57 +41,57 @@ Resources:
       SubnetIds: !Ref PrivateSubnetIds
       Tags:
         - {Key: Project, Value: umsal-backend}
-  Cluster:
-    Type: AWS::RDS::DBCluster
+  Parameters:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: UMSAL PostgreSQL 17 parameters
+      Family: postgres17
+      Parameters:
+        rds.force_ssl: '1'  # explicit, not relying on the engine default
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  Database:
+    Type: AWS::RDS::DBInstance
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Snapshot
     Metadata:
       com.aws.cloudformation.Context:
         why: >-
-          IAM auth tokens are signed inside the Lambda, so no Secrets Manager interface
-          endpoint is needed. The managed master password exists only for break-glass use.
+          IAM auth tokens are signed inside the Lambda, so no Secrets Manager endpoint is
+          needed at runtime. The managed master password is only for the one-time user
+          bootstrap (db-bootstrap.yaml) and break-glass use.
         must:
-          - MinCapacity 0 (auto-pause); 0.5+ ACU bills every hour (~USD 72/month at 0.5 ACU)
+          - Always on (no auto-pause); stop manually when idle (RDS restarts it after 7 days)
           - App and migration users authenticate with IAM; the master user is not used by code
     Properties:
-      Engine: aurora-postgresql
+      Engine: postgres
       EngineVersion: !Ref EngineVersion
-      DatabaseName: umsal
+      DBInstanceClass: !Ref InstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBName: umsal
       MasterUsername: umsal_admin
       ManageMasterUserPassword: true
       EnableIAMDatabaseAuthentication: true
-      StorageEncrypted: true
-      DBClusterParameterGroupName: !Ref ClusterParameters
-      EnableHttpEndpoint: !If [DataApiOn, true, false]
+      DBParameterGroupName: !Ref Parameters
       DBSubnetGroupName: !Ref SubnetGroup
-      VpcSecurityGroupIds: [!Ref DatabaseSecurityGroupId]
-      ServerlessV2ScalingConfiguration:
-        MinCapacity: 0
-        MaxCapacity: !Ref MaxCapacity
-        SecondsUntilAutoPause: !Ref SecondsUntilAutoPause
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroupId]
       BackupRetentionPeriod: 1
+      AutoMinorVersionUpgrade: true
       DeletionProtection: true
       CopyTagsToSnapshot: true
       Tags:
         - {Key: Project, Value: umsal-backend}
-        - {Key: created_by, Value: aurora-skill}
-        - {Key: generation_model, Value: claude-opus-5-5}
-  Writer:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      DBClusterIdentifier: !Ref Cluster
-      DBInstanceClass: db.serverless
-      Engine: aurora-postgresql
-      PubliclyAccessible: false
-      Tags:
-        - {Key: Project, Value: umsal-backend}
 Outputs:
-  ClusterEndpoint:
-    Description: Writer endpoint (private DNS) for IAM-authenticated connections on 5432
-    Value: !GetAtt Cluster.Endpoint.Address
-  ClusterResourceId:
-    Description: Used in the rds-db:connect IAM policy resource ARN
-    Value: !GetAtt Cluster.DBClusterResourceId
+  DbEndpoint:
+    Description: Private DNS endpoint for IAM-authenticated connections on 5432
+    Value: !GetAtt Database.Endpoint.Address
+  DbResourceId:
+    Description: Used in the rds-db:connect IAM policy resource ARN (db-...)
+    Value: !GetAtt Database.DbiResourceId
   MasterSecretArn:
-    Description: Break-glass master credentials (Secrets Manager); not used by the app
-    Value: !GetAtt Cluster.MasterUserSecret.SecretArn
+    Description: Master credentials (Secrets Manager) for the one-time bootstrap only
+    Value: !GetAtt Database.MasterUserSecret.SecretArn

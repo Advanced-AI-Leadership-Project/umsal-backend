@@ -1,4 +1,4 @@
-"""Write CloudFormation parameter files for the stage-2 API and jobs stacks.
+"""Write CloudFormation parameter files for the stage-2 API, jobs and db-bootstrap stacks.
 
 Reads outputs of the already-created stacks (umsal-backend-network, -database, -auth)
 with the AWS CLI (read-only) and fetches the Cognito JWKS document over HTTPS, so the
@@ -87,8 +87,8 @@ def main(argv: list[str] | None = None) -> None:
         "ArtifactKey": args.api_key,
         "SubnetIds": network["PrivateSubnetIds"],
         "LambdaSecurityGroupId": network["LambdaSecurityGroupId"],
-        "DbHost": database["ClusterEndpoint"],
-        "DbClusterResourceId": database["ClusterResourceId"],
+        "DbHost": database["DbEndpoint"],
+        "DbResourceId": database["DbResourceId"],
         "CognitoUserPoolId": auth["UserPoolId"],
         "CognitoAppClientIds": auth["WebClientId"],
         "CognitoJwks": jwks,
@@ -99,11 +99,20 @@ def main(argv: list[str] | None = None) -> None:
         "MigrateArtifactKey": args.migrate_key,
         "SubnetIds": network["PrivateSubnetIds"],
         "LambdaSecurityGroupId": network["LambdaSecurityGroupId"],
-        "DbHost": database["ClusterEndpoint"],
-        "DbClusterResourceId": database["ClusterResourceId"],
+        "DbHost": database["DbEndpoint"],
+        "DbResourceId": database["DbResourceId"],
+    }
+    bootstrap = {
+        "ArtifactBucket": bucket,
+        "ArtifactKey": args.migrate_key,
+        "VpcId": network["VpcId"],
+        "SubnetIds": network["PrivateSubnetIds"],
+        "LambdaSecurityGroupId": network["LambdaSecurityGroupId"],
+        "DbHost": database["DbEndpoint"],
+        "MasterSecretArn": database["MasterSecretArn"],
     }
     OUT.mkdir(parents=True, exist_ok=True)
-    for name, values in (("api", api), ("jobs", jobs)):
+    for name, values in (("api", api), ("jobs", jobs), ("db-bootstrap", bootstrap)):
         path = OUT / f"{name}-params.json"
         path.write_text(json.dumps([f"{k}={v}" for k, v in values.items()], indent=2))
         print(f"Wrote {path.relative_to(ROOT).as_posix()} ({len(values)} parameters)")
