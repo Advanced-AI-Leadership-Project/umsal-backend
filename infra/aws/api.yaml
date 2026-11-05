@@ -1,30 +1,86 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  UMSAL backend API stage 1 (stack umsal-backend-api). HTTP API -> Lambda running the
-  FastAPI app. No VPC, database, user authentication or CloudFront wiring yet; only the
-  health endpoints are implemented.
+  UMSAL backend API (stack umsal-backend-api). HTTP API -> Lambda running the FastAPI app.
+  Stage 1 (deployed): no VPC, no database, no Cognito. Stage 2 (#42, not deployed): the
+  optional parameters below put the Lambda in the private VPC with Aurora IAM auth and
+  Cognito verification using a JWKS document fixed at deploy time.
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
   com.aws.cloudformation.Context:
-    ref: [../../docs/aws-deployment.md, ../../SPEC.md]
+    ref: [../../docs/aws-deployment.md, ../../docs/aws-stage2-design.md, ../../SPEC.md]
     must:
       - Regional resources in the selected Region (ap-southeast-2) only
       - Do not modify umsal-pwa stacks or its CloudFront distribution from this stack
-      - No secrets in parameters, environment variables or logs
+      - No secrets in parameters, environment variables or logs (JWKS are public keys)
+      - Leaving every stage-2 parameter empty must keep the stage-1 deployment unchanged
 Parameters:
   ArtifactBucket:
     Type: String
     Description: Bucket name output by the umsal-backend-bootstrap stack
   ArtifactKey:
     Type: String
-    Description: S3 key of the Lambda zip (lambda/<commit-sha>.zip)
+    Description: S3 key of the API Lambda zip (lambda/<commit-sha>.zip)
     AllowedPattern: '^lambda/[0-9a-f]{40}\.zip$'
   Environment:
     Type: String
     Default: dev
     AllowedValues: [dev]
     Description: Value reported by /api/health/* as environment
+  SubnetIds:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: Stage 2. PrivateSubnetIds output of umsal-backend-network (empty = no VPC)
+  LambdaSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Stage 2. LambdaSecurityGroupId output of umsal-backend-network
+  DbHost:
+    Type: String
+    Default: ''
+    Description: Stage 2. ClusterEndpoint output of umsal-backend-database (empty = no DB)
+  DbClusterResourceId:
+    Type: String
+    Default: ''
+    Description: Stage 2. ClusterResourceId output of umsal-backend-database
+  DbUser:
+    Type: String
+    Default: umsal_app
+    AllowedPattern: '^[a-z_][a-z0-9_]{0,62}$'
+    Description: IAM-authenticated application user (no DDL privileges)
+  CognitoUserPoolId:
+    Type: String
+    Default: ''
+    Description: Stage 2. UserPoolId output of umsal-backend-auth (empty = no auth)
+  CognitoAppClientIds:
+    Type: String
+    Default: ''
+    Description: Stage 2. WebClientId output of umsal-backend-auth (comma-separated)
+  CognitoJwks:
+    Type: String
+    Default: ''
+    Description: >-
+      Stage 2. The whole JWKS document of the user pool, fetched at deploy time by
+      infra/aws/stage2_params.py. Public keys only. Redeploy after a key rotation.
+Conditions:
+  UseVpc: !Not [!Equals [!Join ['', !Ref SubnetIds], '']]
+  UseDatabase: !Not [!Equals [!Ref DbHost, '']]
+  UseCognito: !Not [!Equals [!Ref CognitoUserPoolId, '']]
+Rules:
+  DatabaseNeedsVpc:
+    RuleCondition: !Not [!Equals [!Ref DbHost, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Join ['', !Ref SubnetIds], '']]
+        AssertDescription: Aurora is private; DbHost requires SubnetIds
+      - Assert: !Not [!Equals [!Ref DbClusterResourceId, '']]
+        AssertDescription: DbHost requires DbClusterResourceId for rds-db:connect
+  CognitoNeedsJwks:
+    RuleCondition: !Not [!Equals [!Ref CognitoUserPoolId, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref CognitoJwks, '']]
+        AssertDescription: In the VPC the JWKS must be fixed at deploy time
+      - Assert: !Not [!Equals [!Ref CognitoAppClientIds, '']]
+        AssertDescription: CognitoUserPoolId requires CognitoAppClientIds
 Resources:
   FunctionLog:
     Type: AWS::Logs::LogGroup
@@ -39,8 +95,8 @@ Resources:
     Type: AWS::IAM::Role
     Metadata:
       com.aws.cloudformation.Context:
-        why: Stage 1 touches no AWS data service; the role may only write its own logs.
-        must: [Add data-store permissions per resource ARN when Aurora/DynamoDB/S3 are added]
+        why: Own logs always; VPC ENIs and rds-db:connect only when stage 2 is enabled.
+        must: [rds-db:connect only for the single application user, never dbuser:*]
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -58,27 +114,67 @@ Resources:
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !GetAtt FunctionLog.Arn
+        - !If
+          - UseVpc
+          - PolicyName: VpcNetworkInterfaces
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ec2:CreateNetworkInterface
+                    - ec2:DescribeNetworkInterfaces
+                    - ec2:DeleteNetworkInterface
+                    - ec2:AssignPrivateIpAddresses
+                    - ec2:UnassignPrivateIpAddresses
+                  Resource: '*'  # ENI actions do not support resource-level scoping
+          - !Ref AWS::NoValue
+        - !If
+          - UseDatabase
+          - PolicyName: AuroraAppUserOnly
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: rds-db:connect
+                  Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbClusterResourceId}/${DbUser}'
+          - !Ref AWS::NoValue
   ApiFunction:
     Type: AWS::Lambda::Function
     Metadata:
       com.aws.cloudformation.Context:
-        why: Small bursty requests; no provisioned concurrency, NAT or VPC in stage 1.
-        must: [Mangum handler umsal_backend.lambda_handler.handler, Linux x86_64 wheels only]
+        why: Small bursty requests; no provisioned concurrency or NAT.
+        must:
+          - Mangum handler umsal_backend.lambda_handler.handler, Linux x86_64 wheels only
+          - In the VPC there is no internet route; nothing may fetch from the internet
     Properties:
       FunctionName: !Sub '${AWS::StackName}-api'
       Runtime: python3.12
       Architectures: [x86_64]
       Handler: umsal_backend.lambda_handler.handler
       MemorySize: 256
-      Timeout: 10
+      Timeout: 15
       ReservedConcurrentExecutions: 5
       Role: !GetAtt FunctionRole.Arn
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ArtifactKey}
       LoggingConfig:
         LogGroup: !Ref FunctionLog
+      VpcConfig: !If
+        - UseVpc
+        - SubnetIds: !Ref SubnetIds
+          SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+        - !Ref AWS::NoValue
       Environment:
         Variables:
           UMSAL_ENV: !Ref Environment
+          DB_HOST: !If [UseDatabase, !Ref DbHost, !Ref AWS::NoValue]
+          DB_USER: !If [UseDatabase, !Ref DbUser, !Ref AWS::NoValue]
+          DB_NAME: !If [UseDatabase, umsal, !Ref AWS::NoValue]
+          # Aurora may be resuming from auto-pause; still well inside the 15s timeout.
+          DB_CONNECT_TIMEOUT: !If [UseDatabase, '8', !Ref AWS::NoValue]
+          COGNITO_USER_POOL_ID: !If [UseCognito, !Ref CognitoUserPoolId, !Ref AWS::NoValue]
+          COGNITO_APP_CLIENT_IDS: !If [UseCognito, !Ref CognitoAppClientIds, !Ref AWS::NoValue]
+          COGNITO_JWKS: !If [UseCognito, !Ref CognitoJwks, !Ref AWS::NoValue]
       Tags:
         - {Key: Project, Value: umsal-backend}
   HttpApi:
@@ -94,7 +190,7 @@ Resources:
       IntegrationType: AWS_PROXY
       IntegrationUri: !GetAtt ApiFunction.Arn
       PayloadFormatVersion: '2.0'
-      TimeoutInMillis: 10000
+      TimeoutInMillis: 15000
   ApiRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:

@@ -1,0 +1,207 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  DRAFT (not deployed, #42). UMSAL backend jobs inside the private VPC (stack
+  umsal-backend-jobs): the migration Lambda (operator-invoked, not behind API Gateway)
+  and the daily maintenance purge (EventBridge Scheduler). Both use Aurora IAM auth.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/aws-stage2-design.md]
+    must:
+      - Regional resources in the selected Region (ap-southeast-2) only
+      - rds-db:connect only for one database user per function, never dbuser:*
+      - The migration function has no resource policy; only IAM principals allowed to
+        call lambda:InvokeFunction on it (the operator) can run it
+Parameters:
+  ArtifactBucket:
+    Type: String
+  ApiArtifactKey:
+    Type: String
+    Description: API zip (contains umsal_backend.maintenance)
+    AllowedPattern: '^lambda/[0-9a-f]{40}\.zip$'
+  MigrateArtifactKey:
+    Type: String
+    Description: Migration zip from build_lambda.py --kind migrate
+    AllowedPattern: '^lambda/[0-9a-f]{40}-migrate\.zip$'
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DbHost:
+    Type: String
+    MinLength: 1
+  DbClusterResourceId:
+    Type: String
+    MinLength: 1
+  AppDbUser:
+    Type: String
+    Default: umsal_app
+    AllowedPattern: '^[a-z_][a-z0-9_]{0,62}$'
+  MigrationDbUser:
+    Type: String
+    Default: umsal_migrator
+    AllowedPattern: '^[a-z_][a-z0-9_]{0,62}$'
+Resources:
+  MigrationLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-migrate'
+      RetentionInDays: 7
+  MaintenanceLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-maintenance'
+      RetentionInDays: 7
+  MigrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {'aws:SourceAccount': !Ref AWS::AccountId}
+      Policies:
+        - PolicyName: MigrationMinimal
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt MigrationLog.Arn
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'  # ENI actions do not support resource-level scoping
+              - Effect: Allow
+                Action: rds-db:connect
+                Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbClusterResourceId}/${MigrationDbUser}'
+  MaintenanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {'aws:SourceAccount': !Ref AWS::AccountId}
+      Policies:
+        - PolicyName: MaintenanceMinimal
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt MaintenanceLog.Arn
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'
+              - Effect: Allow
+                Action: rds-db:connect
+                Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbClusterResourceId}/${AppDbUser}'
+  MigrationFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Aurora is private and the operator machine cannot reach it.
+        must: [Logs only revision identifiers, Not connected to API Gateway]
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-migrate'
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: umsal_backend.migration_lambda.handler
+      MemorySize: 512
+      Timeout: 300
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt MigrationRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref MigrateArtifactKey}
+      LoggingConfig:
+        LogGroup: !Ref MigrationLog
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+      Environment:
+        Variables:
+          DB_HOST: !Ref DbHost
+          DB_USER: !Ref MigrationDbUser
+          DB_NAME: umsal
+          DB_CONNECT_TIMEOUT: '20'
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  MaintenanceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-maintenance'
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: umsal_backend.maintenance.scheduled_handler
+      MemorySize: 256
+      Timeout: 60
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt MaintenanceRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ApiArtifactKey}
+      LoggingConfig:
+        LogGroup: !Ref MaintenanceLog
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+      Environment:
+        Variables:
+          DB_HOST: !Ref DbHost
+          DB_USER: !Ref AppDbUser
+          DB_NAME: umsal
+          DB_CONNECT_TIMEOUT: '20'
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {'aws:SourceAccount': !Ref AWS::AccountId}
+      Policies:
+        - PolicyName: InvokeMaintenanceOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt MaintenanceFunction.Arn
+  DailyPurge:
+    Type: AWS::Scheduler::Schedule
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Removes expired idempotency records (raw invite codes) and dead invitations (D11).
+    Properties:
+      Description: Daily purge of expired idempotency keys and unaccepted invitations
+      ScheduleExpression: cron(0 18 * * ? *)  # 03:00 KST
+      FlexibleTimeWindow: {Mode: 'OFF'}
+      State: ENABLED
+      Target:
+        Arn: !GetAtt MaintenanceFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        RetryPolicy: {MaximumRetryAttempts: 2}
+Outputs:
+  MigrationFunctionName:
+    Value: !Ref MigrationFunction
+  MaintenanceFunctionName:
+    Value: !Ref MaintenanceFunction

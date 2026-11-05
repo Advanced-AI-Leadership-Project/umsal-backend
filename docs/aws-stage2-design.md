@@ -47,9 +47,9 @@ flowchart LR
 - **마이그레이션 Lambda 호출 권한**은 운영자 역할에만 준다. 이 Lambda는 API Gateway에 연결하지 않는다.
 - **합성 데이터만**: 보관·삭제 정책(umsal-pwa #19)이 정해지기 전에는 실제 사용자 자료를 넣지 않는다.
 
-### 결정 필요(사용자)
+### 확정된 결정
 
-- **Cognito 자가 가입**: 초안(`auth.yaml`)은 누구나 이메일로 가입할 수 있다. 가족 음성 자료를 다루므로 초대받은 사람만 가입하게 하려면 `AdminCreateUserConfig.AllowAdminCreateUserOnly`를 켜고 가입 경로를 따로 만들어야 한다.
+- **Cognito 자가 가입 허용(2026-11-05, 사용자 결정)**: 누구나 이메일로 가입할 수 있다(`auth.yaml` 그대로). 가입만으로는 아무 자료도 볼 수 없고, 관계는 초대 수락으로만 생기며 분석·공유는 양쪽 동의가 있어야 한다(D11·D12).
 
 ## 3. 비용 견적 (ap-southeast-2)
 
@@ -83,7 +83,10 @@ flowchart LR
 
 - Aurora PostgreSQL serverless는 클러스터당 **최대 4 ACU, 저장 공간 1 GiB**까지다(Paid 플랜 전환 시 해제). 녹음 메타데이터와 작업 상태가 쌓이는 3단계에서 다시 본다.
 
-## 4. 코드 변경 목록 (구현 PR에서)
+## 4. 코드 변경 목록
+
+**구현(#42):** 1·2·4(사용자 생성 SQL 제외)·5·6 항목과 정리 작업 스케줄을 코드와 템플릿(`api.yaml` 선택 파라미터, `jobs.yaml`, `build_lambda.py --kind migrate`, `stage2_params.py`)으로 구현했다. 3(재개 지연 실측)·4의 사용자 생성 SQL·8(CloudFront)은 생성 단계에서 한다. AWS에는 아직 배포하지 않았다.
+
 
 1. **IAM 토큰 접속**: `db.connect`가 `DB_HOST`·`DB_USER`·`DB_NAME`·리전으로 `rds.generate_db_auth_token`을 호출해 비밀번호로 쓰고 `sslmode=verify-full`로 접속한다. 토큰은 약 10분 캐시하고, IAM 인증의 신규 연결 속도 한도를 연결 수와 함께 본다. 로컬은 지금처럼 `DATABASE_URL`을 유지한다. `db.py` docstring의 "Secrets Manager 주입" 서술을 고친다.
 2. **JWKS 정적 로딩**: `auth.py`에 이미 있는 키 해석기 주입을 써서, 환경 변수(또는 배포 패키지 파일)로 받은 JWKS에서 `kid`로 키를 찾는다. 배포 스크립트가 배포 때 `https://cognito-idp.<region>.amazonaws.com/<pool>/.well-known/jwks.json` **문서 전체**(보통 키 2개)를 받아 넣는다. 알 수 없는 `kid`는 401이고 실행 중 재조회는 하지 않는다. **정적 JWKS 설정이 없을 때 URL 조회 해석기로 조용히 되돌아가지 않는다**(VPC 안에서는 모든 요청이 503이 되므로, 설정 누락은 시작 시 오류로 드러나게 한다).

@@ -76,5 +76,11 @@ DB·NAT·VPC가 없어 소량 요청은 무료 제공량 안에 든다. 실제 �
 
 ## 다음 단계
 
-- 2단계: [aws-stage2-design.md](aws-stage2-design.md)(VPC·Aurora·Cognito, 비용 견적). 사용자 확인 후 생성
+- 2단계: [aws-stage2-design.md](aws-stage2-design.md)(VPC·Aurora·Cognito, 비용 견적). 코드·템플릿은 #42에서 준비했고 실제 생성은 사용자 확인 후 한다. 준비된 절차(요약):
+  1. `auth.yaml`·`network.yaml`·`database.yaml` 스택 생성(각각 change set 확인)
+  2. `EnableDataApi=true`로 갱신 → `aws rds-data execute-statement`로 `umsal_app`(DDL 없음)·`umsal_migrator` 생성과 `GRANT rds_iam` → `EnableDataApi=false`
+  3. `python infra/aws/build_lambda.py`와 `--kind migrate`로 두 zip을 만들어 artifact 버킷에 올림
+  4. `python infra/aws/stage2_params.py --api-key … --migrate-key …`로 파라미터 파일 생성(Cognito JWKS를 이때 받아 고정)
+  5. `jobs.yaml` 배포 → `aws lambda invoke`로 마이그레이션 실행 → `api.yaml`을 `--parameter-overrides file://.local/stage2/api-params.json`으로 갱신
+  6. `/api/health/ready`의 `aurora: ok`와 합성 계정 `/api/me` 확인
 - CloudFront `/api/*`를 이 API로 보낼지(경로 분리 포함) umsal-pwa와 조율
