@@ -1,0 +1,7 @@
+{
+  "demo": true,
+  "job_id": "job_demo_audio_001",
+  "recording_id": "rec_demo_001",
+  "stage": "AUDIO_PREP",
+  "pipeline_version": "demo-pipeline-0.2"
+}

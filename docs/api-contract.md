@@ -2,13 +2,14 @@
 
 2026-11-04 · 이슈 #9 · 대응: umsal-pwa #20 (DEV-04)
 
-**초안이다.** 아래 업무 API는 모두 미구현이며 "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 이 문서는 계약 차이와 결정 항목을 정리할 뿐 OpenAPI 파일을 바꾸지 않는다.
+**초안이다.** 아래 업무 API는 모두 미구현이며 "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 계약 원본은 2026-11-05부터 이 저장소 [`contracts/`](../contracts/openapi.yaml)(v0.3.0, #25)이고, 확정 결정 중 D2·D3·D7을 반영했다. 이 문서는 원안과의 차이와 결정 기록이다.
 
 ## 1. 기준 원본
 
 | 항목 | 값 |
 |---|---|
-| 목표 계약 | umsal-pwa [`contracts/openapi.yaml`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/contracts/openapi.yaml) v0.2.0, 23 paths / 28 operations |
+| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.3.0, 26 paths / 31 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7) 추가. 정적 검사는 `tests/test_contracts.py` |
+| 이관 전 원안 | umsal-pwa [`contracts/openapi.yaml`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/contracts/openapi.yaml) v0.2.0, 23 paths / 28 operations |
 | 설계 설명 | umsal-pwa [`docs/design/09_API_계약_및_데이터설계.md`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/docs/design/09_API_%EA%B3%84%EC%95%BD_%EB%B0%8F_%EB%8D%B0%EC%9D%B4%ED%84%B0%EC%84%A4%EA%B3%84.md) (2026-10-27 Android 원안) |
 | 고정 commit | `e54088b9489d67ab3269cb626c860d3b0a4bf79e` (umsal-pwa main, 2026-11-04 조회) |
 | 저장 계층 | 이 저장소 [SPEC](../SPEC.md)의 "저장 계층" (#7) |
@@ -38,7 +39,7 @@ D1·D2·D3·D5·D6·D7·D9는 확정됐고, 나머지(D4·D8)는 미확정이다
 | D4 | 알림 기기 등록 | `POST /devices`가 `platform: ANDROID`, FCM `push_token` 전제 | PWA는 Web Push 구독(`endpoint`, `keys.p256dh`, `keys.auth`)을 쓴다. `DeviceRegistration`을 웹 구독 형태로 바꾸거나 별도 `/push-subscriptions`로 분리한다. 알림 방식 결정(umsal-pwa #52) 뒤 확정한다 |
 | D5 | 저장 계층 반영 | 원안은 PostgreSQL 한 DB에서 job·동의·recording을 잠그고 결과·상태·outbox를 한 트랜잭션으로 commit한다(설계 문서 "기계 작업 계약" 8번) | **확정(2026-11-05, 사용자 결정):** 상태와 fencing에 관여하는 `recordings`·`analysis_jobs`·`speaker_assignments`·`deletion_jobs`·`outbox`·`idempotency_keys`는 Aurora에 두어 grant와 같은 트랜잭션으로 검사한다. DynamoDB에는 `utterances`·`observations`·결과 뷰·주간 집계 항목처럼 양이 많고 키로 읽는 자료를 둔다. #7의 "분석 작업 상태는 DynamoDB" 결정을 바꾸며 SPEC "저장 계층"에 반영했다. 이 배치로도 결과 본문(DynamoDB·S3) 쓰기는 Aurora 트랜잭션에 들어가지 않으므로, SPEC의 저장소 간 철회 경합은 그대로 남는다. 결과 쓰기 순서와 노출 조건은 별도로 설계한다 |
 | D6 | S3 버전 고정 | 계약의 `InputRef`·`ArtifactRef`·`Snapshot`이 S3 `version_id`로 입력을 고정한다 | **확정(2026-11-05, 사용자 결정):** 원음 버킷 버전 관리를 켜 계약의 `version_id` 입력 고정을 유지한다. 삭제 시 모든 버전을 명시적으로 지우고, 이전 버전은 수명 주기 규칙으로 짧은 기한 안에 자동 만료한다. SPEC "저장소를 넘나드는 불변조건"에 반영했다 |
-| D7 | 관계 목록 조회 | `GET /me`는 `Actor`만 반환하고 관계 목록 경로가 없다 | 가족 화면을 위해 `GET /connections`(내 관계 목록)를 추가하거나 `/me` 응답에 관계 요약을 넣는다. **확정(2026-11-05, 사용자 결정, #21):** `GET /connections`를 추가한다. `/me`는 `Actor`만 반환한다. 계약 반영은 `contracts/` 이관 때 한다 |
+| D7 | 관계 목록 조회 | `GET /me`는 `Actor`만 반환하고 관계 목록 경로가 없다 | 가족 화면을 위해 `GET /connections`(내 관계 목록)를 추가하거나 `/me` 응답에 관계 요약을 넣는다. **확정(2026-11-05, 사용자 결정, #21):** `GET /connections`를 추가한다. `/me`는 `Actor`만 반환한다. 계약 v0.3.0에 `listConnections`·`ConnectionPage`로 반영했다(#25) |
 | D8 | MVP 범위 | 28개 operation 전체가 P0 후보 | 발표 범위(umsal-pwa #17)에 맞춰 1차 구현 operation을 고른다. 결정 전에는 계약에서 operation을 삭제하지 않는다 |
 | D9 | 작업자의 S3 산출물 쓰기 | 원안은 작업자가 결과 artifact를 S3의 job 전용 출력 prefix에 직접 쓰고, complete에서 참조만 제출한다(설계 문서 "기계 작업 계약" 3·5번). AGENTS의 "작업자는 Aurora·DynamoDB·S3에 직접 쓰지 않고 API를 거친다"(#7, PR #8에서 추가)와 충돌한다 | **확정(2026-11-05, 사용자 결정):** 원안 구조를 유지하고 AGENTS 문구를 좁혔다. 작업자는 Aurora·DynamoDB와 원음 key에는 쓰지 않고, S3에는 claim이 허용한 job 전용 출력 prefix에만 쓴다. 그 산출물은 API가 검증·commit하기 전까지 결과로 취급하지 않는다. 강한 job별 격리가 필요하면 API가 출력용 presigned PUT URL을 발급하는 방식을 검토한다. AGENTS 제품 불변조건에 반영했다 |
 
@@ -104,5 +105,5 @@ umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변�
 ## 7. 다음 단계
 
 1. D1·D2·D3·D5·D6·D7·D9는 확정했다(D2·D3 검증은 구현, D5·D6은 SPEC "저장 계층", D9는 AGENTS 제품 불변조건에 반영). D4는 umsal-pwa #52, D8은 #17 결정 뒤 정한다.
-2. D2·D7을 반영한 계약을 이 저장소 `contracts/openapi.yaml`로 옮긴다(별도 이슈).
+2. 계약을 이 저장소 `contracts/`로 옮기고 D2·D3·D7을 반영했다(#25). umsal-pwa 쪽 사본 정리(삭제·참조 전환·프런트 타입 생성)는 PWA 팀이 정한다.
 3. umsal-pwa #17의 발표 범위로 1차 operation(D8)을 정한 뒤 DB 스키마(umsal-pwa #23)와 인증(#24)을 시작한다.

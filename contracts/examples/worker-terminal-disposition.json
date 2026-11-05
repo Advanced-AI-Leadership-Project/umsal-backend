@@ -1,0 +1,8 @@
+{
+  "job_id": "job_demo_text_001",
+  "terminal": true,
+  "acknowledgement": "DELETE_MESSAGE",
+  "reason": "ALREADY_COMPLETED",
+  "durable_disposition_recorded": true,
+  "demo": true
+}

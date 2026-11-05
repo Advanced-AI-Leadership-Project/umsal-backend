@@ -1,0 +1,10 @@
+{
+  "demo": true,
+  "expected_version": 0,
+  "analysis_allowed": true,
+  "sharing_scopes": [
+    "summary",
+    "repetition"
+  ],
+  "verification_preview_allowed_to_other_participant": false
+}
