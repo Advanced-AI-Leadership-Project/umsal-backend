@@ -19,7 +19,9 @@ flowchart LR
 - 프로젝트 계정, 선택 리전 `ap-southeast-2`. umsal-pwa 스택(`umsal-pwa-demo*`, `umsal-demo-storage`)과 그 CloudFront는 건드리지 않는다.
 - 직접 API 주소는 인증 없이 열려 있다. 지금 노출되는 것은 health 경로뿐이다. 업무 API를 배포하기 전에 Cognito 인증(D3)과 CloudFront `/api/*` 연결 방식을 정해야 한다.
 - API 접근 로그는 요청 ID·경로 키·상태·응답 길이만 남긴다. 헤더·본문·쿼리·IP는 남기지 않는다.
-- 스로틀링은 실수로 인한 비용을 줄이는 장치이며 절대 비용 상한이 아니다.
+- 스로틀링은 실수로 인한 비용을 줄이는 장치이며 절대 비용 상한이 아니다. Lambda 동시 실행이 5로 묶여 있어 동시 요청이 5를 넘으면 API Gateway 한도(burst 10) 안이라도 일부 요청이 5xx로 실패할 수 있다. 1단계에서는 의도한 제한이다.
+- Lambda zip에는 Git이 추적하는 `src/umsal_backend` 파일만 들어간다. 무시 대상 로컬 파일(`.env` 등)은 포함하지 않는다.
+- FastAPI 기본 `/docs`·`/openapi.json`도 같은 주소에서 열린다. 업무 API 배포 전(D3)에 비활성화나 보호를 정한다.
 
 ## 배포 절차
 
@@ -63,7 +65,7 @@ AWS IaC MCP의 cfn-guard 보안 규칙 검사에서 6건이 나왔고 다음처�
 
 | 규칙 | 판단 |
 |---|---|
-| S3 Object Lock·복제·접근 로그 | artifact 버킷에 과하다. 다른 리전 복제는 이 프로젝트 요금제에서 금지다 |
+| S3 Object Lock·복제·접근 로그 | artifact 버킷에 과하다. 다른 리전 복제는 AGENTS의 AWS 규칙(new AWS experience: cross-Region 복제 금지)에 어긋난다 |
 | S3 HTTPS 전용·공개 ACL 금지 | 거부 정책과 공개 차단 4개 설정이 이미 있다. 규칙이 기대하는 정책 형식과 달라 걸린 것으로 본다 |
 | IAM inline policy | 권한이 자기 로그 쓰기뿐이고 umsal-pwa와 같은 방식이라 유지한다. 데이터 저장소 권한을 추가할 때 다시 검토한다 |
 

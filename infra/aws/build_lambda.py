@@ -71,11 +71,18 @@ def main() -> None:
         cwd=ROOT,
         check=True,
     )
-    shutil.copytree(
-        ROOT / "src" / "umsal_backend",
-        package / "umsal_backend",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-    )
+    # Copy only git-tracked app files so ignored local files (.env etc.) never ship.
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "src/umsal_backend"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split("\0")
+    for name in filter(None, tracked):
+        relative = Path(name).relative_to("src")
+        (package / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, package / relative)
     out_dir = ROOT / ".local" / "lambda"
     out_dir.mkdir(parents=True, exist_ok=True)
     archive = out_dir / f"{sha}.zip"
