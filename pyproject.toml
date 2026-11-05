@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "엄살 백엔드 - FastAPI 서버리스(API Gateway, Lambda, Aurora PostgreSQL, DynamoDB, S3)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "boto3>=1.35,<2",
     "fastapi>=0.115,<1",
     "mangum>=0.19,<1",
     "psycopg[binary]>=3.2,<4",
@@ -14,8 +15,13 @@ dependencies = [
 umsal-backend = "umsal_backend.__main__:main"
 
 [dependency-groups]
-dev = [
+# Packaged into the migration Lambda only (infra/aws/build_lambda.py --kind migrate).
+migrations = [
     "alembic>=1.14,<2",
+    "sqlalchemy>=2.0,<3",
+]
+dev = [
+    { include-group = "migrations" },
     "httpx>=0.28.1,<0.29",
     "jsonschema>=4.23,<5",
     "pip-audit==2.10.1",
@@ -24,7 +30,6 @@ dev = [
     "pyyaml>=6,<7",
     "referencing>=0.36,<1",
     "ruff>=0.11,<1",
-    "sqlalchemy>=2.0,<3",
     "uvicorn>=0.32,<1",
 ]
 

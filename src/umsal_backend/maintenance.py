@@ -19,7 +19,7 @@ from typing import Any
 
 import psycopg
 
-from umsal_backend.db import connect, database_url
+from umsal_backend.db import database_from_env
 
 
 def purge_expired(connection: psycopg.Connection) -> dict[str, int]:
@@ -33,10 +33,10 @@ def purge_expired(connection: psycopg.Connection) -> dict[str, int]:
 
 
 def run() -> dict[str, int]:
-    url = database_url()
-    if not url:
-        raise SystemExit("DATABASE_URL is not set.")
-    with connect(url, autocommit=True) as connection:
+    target = database_from_env()
+    if target is None:
+        raise SystemExit("DATABASE_URL or DB_HOST is not set.")
+    with target.connect(autocommit=True) as connection:
         return purge_expired(connection)
 
 
