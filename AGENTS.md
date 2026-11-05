@@ -38,7 +38,7 @@
 
 | 변경 | 확인할 검사 |
 |---|---|
-| Python 코드·의존성 | `make db-up` 후 `make python-check` (Ruff·포맷·실제 PostgreSQL을 쓰는 pytest·coverage 80%). DB 없이 돌리면 DB 테스트가 건너뛰어져 coverage 기준을 넘지 못한다 |
+| Python 코드·의존성 | `make db-up` 후 `make python-check` (Ruff·포맷·실제 PostgreSQL을 쓰는 pytest·coverage 80%). DB 없이 돌리면 건너뛰지 않고 실패한다. 테스트가 그 로컬 DB에 마이그레이션을 적용하고 테이블을 비운다 |
 | 의존성 | 위 검사 + `make verify-security` |
 | Git·CI 하네스(`tools/`, `.github/`, `.githooks/`) | `make workflow-check` 및 `Review-Scope: harness` 독립 리뷰 |
 | AWS 배포·인프라 | 실제 배포 명령과 배포된 `/health` 응답. CI 통과로 대체하지 않는다 |

@@ -31,7 +31,7 @@ make db-down      # 컨테이너 중지(데이터 볼륨은 유지)
 
 ## 검사
 
-Python 테스트는 실제 PostgreSQL이 필요하다. 먼저 `make db-up`으로 로컬 DB를 띄운다. CI는 자체 PostgreSQL 서비스로 같은 테스트를 실행한다.
+Python 테스트는 실제 PostgreSQL이 필요하다. 먼저 `make db-up`으로 로컬 DB를 띄운다. DB가 없으면 `make python-check`는 건너뛰지 않고 실패한다. 테스트는 그 로컬 DB에 마이그레이션을 적용하고 테이블을 비우므로, 손으로 넣어 둔 합성 데이터는 지워진다. CI는 자체 PostgreSQL 서비스로 같은 테스트를 실행한다.
 
 ```bash
 make verify-fast      # 전체 tracked tree 정책 검사 + Ruff·포맷·pytest(coverage 80%)
