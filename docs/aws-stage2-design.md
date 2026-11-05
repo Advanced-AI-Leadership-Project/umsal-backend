@@ -121,7 +121,8 @@ JWKS를 배포 때 고정하므로 Cognito가 서명 키를 바꾸면 **새 키�
 
 ## 6. 검증 상태
 
-- `infra/aws/network.yaml`·`database.yaml`·`auth.yaml`: cfn-lint 1.59.0 통과. 실제 생성·배포·접속은 하지 않았다.
+- `infra/aws/network.yaml`·`database.yaml`·`auth.yaml`: cfn-lint 1.59.0 통과.
+- 2026-11-05 실제 생성·배포·접속 완료(5절 1~6). `/api/health/ready`의 `aurora: ok`와 합성 계정 `/api/me` 200을 확인했다. 기록은 [aws-deployment.md](aws-deployment.md#2단계-배포-기록). 7(정리 Lambda·스케줄)은 `umsal-backend-jobs` 스택으로 함께 만들었고 정기 실행 결과는 아직 확인하지 않았다.
 - RDS for PostgreSQL 17.11 가용 여부는 `aws rds describe-db-engine-versions --engine postgres`(읽기 전용)로 확인했다. 템플릿은 `aws cloudformation validate-template`를 통과했다(#44).
 
 ## 7. 버린 대안: Aurora express configuration (#38 초안)
