@@ -2,7 +2,7 @@
 
 2026-11-04 · 이슈 #9 · 대응: umsal-pwa #20 (DEV-04)
 
-**초안이다.** 업무 API의 구현 여부는 2절 표를 따른다(일부만 구현). "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9·D11을 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 계약 원본은 2026-11-05부터 이 저장소 [`contracts/`](../contracts/openapi.yaml)(v0.3.0, #25)이고, 확정 결정 중 D2·D3·D7을 반영했다. 이 문서는 원안과의 차이와 결정 기록이다.
+**초안이다.** 업무 API의 구현 여부는 2절 표를 따른다(일부만 구현). "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9·D11·D12를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 계약 원본은 2026-11-05부터 이 저장소 [`contracts/`](../contracts/openapi.yaml)(v0.3.0, #25)이고, 확정 결정 중 D2·D3·D7을 반영했다. 이 문서는 원안과의 차이와 결정 기록이다.
 
 ## 1. 기준 원본
 
@@ -22,14 +22,14 @@
 | 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-backend | 구현(D2, #17). ready의 Aurora·DynamoDB 확인은 연결 구현 전이라 `not_configured` → 503 |
 | 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-pwa `services/api` | 구현. ready는 로컬 PostgreSQL `SELECT 1` |
 | 실행 | `GET /api/push/config`, `POST·DELETE /api/push/subscription`, `POST /api/push/test` | umsal-pwa `services/api` | 테스트 채널만 구현(기본 비활성) |
-| 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | umsal-backend (D1 확정) | `getMe`·`listConnections`·`getConnection`(#29), `createInvitation`·`acceptInvitation`(#31) 구현, 나머지 미구현 |
+| 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | umsal-backend (D1 확정) | `getMe`·`listConnections`·`getConnection`(#29), `createInvitation`·`acceptInvitation`(#31), `getConsents`·`updateConsents`(#34) 구현, 나머지 미구현 |
 | 목표 | worker operation 4개(`/internal/worker/jobs/{id}/claim·heartbeat·complete·fail`) | umsal-backend (D1 확정) | 미구현 |
 
 PWA 화면은 같은 출처의 `/api/health/{live,ready}`를 호출하고 `service == "api"`, ready의 `checks.database == "ok"`를 확인한다. 이 백엔드도 D2에 따라 같은 경로와 응답 모양을 제공한다. 단, Aurora·DynamoDB 연결 확인을 붙이기 전까지 ready는 503 `not_ready`이므로 PWA의 ready 확인은 실패로 표시된다.
 
 ## 3. 결정 필요 항목
 
-D1·D2·D3·D5·D6·D7·D9·D11은 확정됐고, 나머지(D4·D8·D10)는 미확정이다.
+D1·D2·D3·D5·D6·D7·D9·D11·D12는 확정됐고, 나머지(D4·D8·D10)는 미확정이다.
 
 | ID | 항목 | 현재 상태 | 권장안 |
 |---|---|---|---|
@@ -44,6 +44,7 @@ D1·D2·D3·D5·D6·D7·D9·D11은 확정됐고, 나머지(D4·D8·D10)는 미�
 | D9 | 작업자의 S3 산출물 쓰기 | 원안은 작업자가 결과 artifact를 S3의 job 전용 출력 prefix에 직접 쓰고, complete에서 참조만 제출한다(설계 문서 "기계 작업 계약" 3·5번). AGENTS의 "작업자는 Aurora·DynamoDB·S3에 직접 쓰지 않고 API를 거친다"(#7, PR #8에서 추가)와 충돌한다 | **확정(2026-11-05, 사용자 결정):** 원안 구조를 유지하고 AGENTS 문구를 좁혔다. 작업자는 Aurora·DynamoDB와 원음 key에는 쓰지 않고, S3에는 claim이 허용한 job 전용 출력 prefix에만 쓴다. 그 산출물은 API가 검증·commit하기 전까지 결과로 취급하지 않는다. 강한 job별 격리가 필요하면 API가 출력용 presigned PUT URL을 발급하는 방식을 검토한다. AGENTS 제품 불변조건에 반영했다 |
 | D10 | 표시 이름 출처 | 계약 `Actor.display_name`은 필수 문자열이지만 값을 설정하는 operation이 없고, Cognito access token에는 이름이 없다 | 미정(#29에서 발견). 후보: 프로필 수정 operation 추가, 초대 수락 때 입력, Cognito ID token·사용자 속성 사용. 결정 전까지 서버는 빈 문자열을 반환한다 |
 | D11 | 초대 유효 기간·코드 | 계약은 `expires_at`만 있고 기간·코드 형식이 없다 | **확정(2026-11-05, 사용자 승인, #31):** 유효 24시간, 코드 10자(Crockford base32, 대소문자·하이픈·공백 무시), 수락에는 초대 ID와 코드가 모두 필요. 코드는 SHA-256만 저장한다. 다만 같은 `Idempotency-Key` 재전송에 같은 응답을 주려고 원문 코드가 멱등 기록에 남는다. 기록은 24시간 뒤 만료되어 재전송에 쓰이지 않고 같은 사용자의 다음 요청 때 지워지지만, 정기 삭제 작업(후속 이슈)이 생기기 전에는 그 사용자가 다시 요청하지 않으면 만료 뒤에도 DB에 남을 수 있다. 수락은 ACTIVE 관계를 만들고 grant는 만들지 않는다(FR-02) |
+| D12 | 동의 기본값·계산 규칙 | 계약은 `ConsentView.version ≥ 1`, `expected_version ≥ 0`, 서버 계산 `both_analysis_allowed`·`verification_preview_allowed`만 정한다 | **확정(2026-11-05, 사용자 승인, #34):** 관계가 생길 때 양쪽 방향 모두 전부 거부·버전 1 행을 만든다(초대 수락은 동의가 아님). `both_analysis_allowed`와 `verification_preview_allowed`는 양쪽이 모두 허용하고 관계가 ACTIVE일 때만 참이다. 해제된 관계의 동의는 바꿀 수 없다(409). 기본 행이 없는 관계(직접 삽입·이전 데이터)는 동의 API 첫 접근 때 기본 거부 행을 만들므로 GET도 한 번 쓰기를 할 수 있다. 관계 해제 시 동의 행 처리는 해제 API에서 정한다. 동의 요청의 boolean·정수는 엄격히 검사해 `"yes"`·`1` 같은 값을 거절한다. 분석 동의 철회 시 진행 중 처리 취소는 녹음·작업 구현 때 연결한다 |
 
 ## 4. 상태 흐름 정합
 
