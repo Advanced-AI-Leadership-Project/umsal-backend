@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  UMSAL operator database inspection (stack umsal-backend-db-inspect, #60): a read-only
+  Lambda inside the private VPC that lists tables with row counts and returns up to 100
+  rows of one table. Invoked only by the operator (aws lambda invoke); not behind API
+  Gateway. Uses RDS PostgreSQL IAM auth as the app user in READ ONLY transactions.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/aws-deployment.md]
+    must:
+      - Regional resources in the selected Region (ap-southeast-2) only
+      - rds-db:connect only for the app database user, never dbuser:*
+      - No resource policy; only IAM principals allowed lambda:InvokeFunction can run it
+      - Logs only the action, table name and row count, never row contents
+Parameters:
+  ArtifactBucket:
+    Type: String
+  ArtifactKey:
+    Type: String
+    Description: >-
+      API zip, or the slim <sha>-inspect.zip (API zip without boto3/botocore, which the
+      Lambda runtime provides, and cryptography, which the database path does not import)
+    AllowedPattern: '^lambda/[0-9a-f]{40}(-inspect)?\.zip$'
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DbHost:
+    Type: String
+    MinLength: 1
+  DbResourceId:
+    Type: String
+    MinLength: 1
+  AppDbUser:
+    Type: String
+    Default: umsal_app
+    AllowedPattern: '^[a-z_][a-z0-9_]{0,62}$'
+Resources:
+  InspectLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}'
+      RetentionInDays: 7
+  InspectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {'aws:SourceAccount': !Ref AWS::AccountId}
+      Policies:
+        - PolicyName: InspectMinimal
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt InspectLog.Arn
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'  # ENI actions do not support resource-level scoping
+              - Effect: Allow
+                Action: rds-db:connect
+                Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbResourceId}/${AppDbUser}'
+  InspectFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref AWS::StackName
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: umsal_backend.db_inspect.handler
+      MemorySize: 256
+      Timeout: 30
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt InspectRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ArtifactKey}
+      LoggingConfig:
+        LogGroup: !Ref InspectLog
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: [!Ref LambdaSecurityGroupId]
+      Environment:
+        Variables:
+          DB_HOST: !Ref DbHost
+          DB_USER: !Ref AppDbUser
+          DB_NAME: umsal
+          DB_CONNECT_TIMEOUT: '20'
+      Tags:
+        - {Key: Project, Value: umsal-backend}
+Outputs:
+  InspectFunctionName:
+    Value: !Ref InspectFunction
