@@ -19,8 +19,10 @@ Parameters:
     Type: String
   ArtifactKey:
     Type: String
-    Description: API zip (contains umsal_backend.db_inspect)
-    AllowedPattern: '^lambda/[0-9a-f]{40}\.zip$'
+    Description: >-
+      API zip, or the slim <sha>-inspect.zip (API zip without boto3/botocore, which the
+      Lambda runtime provides, and cryptography, which the database path does not import)
+    AllowedPattern: '^lambda/[0-9a-f]{40}(-inspect)?\.zip$'
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
   LambdaSecurityGroupId:

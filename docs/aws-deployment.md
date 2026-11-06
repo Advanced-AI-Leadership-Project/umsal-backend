@@ -153,3 +153,13 @@ Cognito managed login(로그인·회원가입 화면)은 `auth.yaml`의 `Brandin
 
 - 업로드·작업·결과 API(항목 키 설계, S3 CORS·presigned URL, API의 항목·버킷 권한): MVP 범위(D8) 결정 뒤
 - CloudFront `/api/*`를 이 API로 보낼지(경로 분리 포함) umsal-pwa와 조율
+
+## DB 조회 Lambda 기록
+
+이슈 #60. VPC 안 RDS를 운영자가 `aws lambda invoke`로 읽기 전용 조회한다. 코드는 [db_inspect.py](../src/umsal_backend/db_inspect.py), 템플릿은 [db-inspect.yaml](../infra/aws/db-inspect.yaml)(스택 `umsal-backend-db-inspect`, API Gateway 없음, `umsal_app`만 `rds-db:connect`).
+
+- 요청: `{"action": "tables"}`(테이블별 행 수), `{"action": "rows", "table": "users", "limit": 20}`(최대 100행). 임의 SQL은 받지 않고 READ ONLY 트랜잭션에서 실행한다. 로그에는 동작·테이블·행 수만 남긴다.
+- 호출: `aws lambda invoke $P --function-name umsal-backend-db-inspect --cli-binary-format raw-in-base64-out --payload '{"action":"tables"}' out.json`. 응답에는 행 내용이 있으므로 `out.json`은 확인 후 지운다.
+- 2026-11-06 배포: commit `c1dfda7`. 업로드 속도(약 35KB/s) 때문에 API zip에서 Lambda 런타임이 제공하는 boto3·botocore와 DB 경로가 쓰지 않는 cryptography를 뺀 `lambda/<SHA>-inspect.zip`(9MB)을 썼다. change set은 `InspectFunction`·`InspectLog`·`InspectRole` 추가만, `CREATE_COMPLETE`.
+- 확인: `tables` → `alembic_version 1, users 1`, 나머지 0. `rows`(`users`)는 합성 계정 1행. `pg_roles` 요청은 `Unknown table in schema public.`로 거부.
+- 사고 기록: 2026-11-05 23:32~23:35 UTC 콘솔에서 DB 보안 그룹 `sg-0d313953176c1816d`의 Lambda SG 허용 규칙이 삭제되고 공인 IP `/32` 규칙만 남아 API ready가 `database: unavailable`이 됐다(재부팅으로는 해결 안 됨). 2026-11-06 Lambda SG → 5432 규칙을 다시 추가해 ready가 200으로 돌아왔다. DB는 `PubliclyAccessible: false`라 공인 IP 규칙으로는 접속할 수 없다. 남은 공인 IP 규칙은 network 스택 템플릿과 어긋나는 drift이며 삭제 여부는 사용자가 정한다.
