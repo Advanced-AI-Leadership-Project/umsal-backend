@@ -70,7 +70,8 @@ def migrated_db(test_database_url, monkeypatch):
     with _admin_connection(test_database_url) as connection:
         try:
             connection.execute(
-                "TRUNCATE users, connections, invitations, idempotency_keys, consent_grants CASCADE"
+                "TRUNCATE users, connections, invitations, idempotency_keys, consent_grants, "
+                "connection_labels CASCADE"
             )
         except psycopg.errors.LockNotAvailable:
             # main verification of cdf46da waited here for 13 minutes (#56).
