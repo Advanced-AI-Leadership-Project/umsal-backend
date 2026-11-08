@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 엄살 MVP API 계약
-  version: 0.3.0
+  version: 0.4.0
   description: 설계 스키마. 원본은 umsal-backend contracts/(umsal-pwa e54088b의 v0.2.0에서 이관). 구현 상태는 umsal-backend
     SPEC "현재 구현 상태"를 따르며 이 문서의 operation이 실행 중임을 뜻하지 않는다. 모든 경로는 /api 아래(D2). 사용자CognitoBearer와기계AWS_IAM/SigV4
     분리. 모든긴처리는비동기.
@@ -583,6 +583,64 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ConsentUpdate'
+  /connections/{id}/label:
+    put:
+      operationId: setConnectionLabel
+      summary: 이 연결에서 내가 상대를 부르는 호칭 변경(D10)
+      description: 호칭은 요청자에게만 보이며 상대의 호칭·display_name을 바꾸지 않는다. 참여자만, ACTIVE 연결만 변경할 수 있다.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      responses:
+        '200':
+          description: 내구 상태 반영 또는 조회 성공. 배포/실행 완료를 의미하지 않는 계약.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 없음 또는 존재 비공개
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 비활성 연결 또는 idempotency 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema·의미 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelUpdate'
   /uploads:
     post:
       operationId: createUpload
@@ -2099,6 +2157,13 @@ components:
         version:
           type: integer
           minimum: 1
+        label:
+          description: 요청자가 이 연결의 상대를 부르는 호칭(D10). 요청자에게만 보이며 없으면 null.
+          type:
+          - string
+          - 'null'
+          minLength: 1
+          maxLength: 16
       required:
       - connection_id
       - participants
@@ -3234,8 +3299,25 @@ components:
       type: object
       additionalProperties: false
       properties:
+        label:
+          $ref: '#/components/schemas/ConnectionLabel'
         demo: *id005
       required: []
+    ConnectionLabel:
+      description: 연결 상대를 부르는 호칭(D10). 앞뒤 공백 제거 후 1~16자, 제어 문자 불가.
+      type: string
+      minLength: 1
+      maxLength: 16
+      pattern: ^[^\x00-\x1f\x7f-\x9f]+$
+    LabelUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        label:
+          $ref: '#/components/schemas/ConnectionLabel'
+        demo: *id005
+      required:
+      - label
     InvitationTicket:
       type: object
       additionalProperties: false
@@ -3256,6 +3338,8 @@ components:
           type: string
           minLength: 6
           maxLength: 64
+        label:
+          $ref: '#/components/schemas/ConnectionLabel'
         demo: *id005
       required:
       - invite_code

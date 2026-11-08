@@ -29,6 +29,8 @@ class Connection(BaseModel):
     participants: list[Actor] = Field(min_length=2, max_length=2)
     status: Literal["PENDING", "ACTIVE", "DISCONNECTED"]
     version: int = Field(ge=1)
+    # How the caller calls the other participant (D10). Visible only to the caller.
+    label: str | None = None
 
 
 class ConnectionPage(BaseModel):
@@ -36,17 +38,19 @@ class ConnectionPage(BaseModel):
     next_cursor: str | None
 
 
+# Every query using _SELECT binds %(me)s: only the caller's own label is joined.
 _SELECT = """
     SELECT c.id, c.status, c.version, c.created_at,
-           ua.id, ua.display_name, ub.id, ub.display_name
+           ua.id, ua.display_name, ub.id, ub.display_name, l.label
     FROM connections c
     JOIN users ua ON ua.id = c.user_a_id
     JOIN users ub ON ub.id = c.user_b_id
+    LEFT JOIN connection_labels l ON l.connection_id = c.id AND l.owner_id = %(me)s
 """
 
 
 def _row_to_connection(row: tuple) -> Connection:
-    connection_id, status, version, _created_at, a_id, a_name, b_id, b_name = row
+    connection_id, status, version, _created_at, a_id, a_name, b_id, b_name, label = row
     return Connection(
         connection_id=connection_id,
         participants=[
@@ -55,6 +59,7 @@ def _row_to_connection(row: tuple) -> Connection:
         ],
         status=status,
         version=version,
+        label=label,
     )
 
 

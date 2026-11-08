@@ -89,7 +89,8 @@ def test_implemented_set_is_tracked(app_ops, contract_ops):
             "getHealthReady",
             "getMe",
             "listConnections",
+            "setConnectionLabel",
             "updateConsents",
         ]
     )
-    assert len(contract_ops) == 31
+    assert len(contract_ops) == 32
