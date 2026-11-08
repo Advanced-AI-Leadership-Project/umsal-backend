@@ -212,3 +212,6 @@ def test_labelled_reconnect_after_disconnect(client, disconnecter, reinviter):
         listed = client.get("/api/connections", headers=_h(sub)).json()["items"]
         statuses = {item["connection_id"]: item["status"] for item in listed}
         assert statuses == {old: "DISCONNECTED", new["connection_id"]: "ACTIVE"}
+    # The re-inviter's label from the new invitation is kept on its own side.
+    mine = client.get("/api/connections", headers=_h(reinviter)).json()["items"]
+    assert {i["connection_id"]: i["label"] for i in mine}[new["connection_id"]] == "가족"
