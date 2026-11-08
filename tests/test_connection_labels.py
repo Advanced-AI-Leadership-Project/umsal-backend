@@ -163,6 +163,15 @@ def test_invalid_label_is_rejected(client, body):
     _assert_error(_put(client, connection_id, "bob", "label-key-1", body), 422, "VALIDATION_FAILED")
 
 
+@pytest.mark.parametrize("label", ["엄 마", "엄 마", "엄 마"])
+def test_api_and_database_agree_on_non_control_characters(client, label):
+    # Accepted by the API pattern, so the database CHECK must accept it too (no 500).
+    connection_id, _ = _connect(client)
+    response = _put(client, connection_id, "bob", "label-key-1", {"label": label})
+    assert response.status_code == 200, response.text
+    assert response.json()["label"] == label
+
+
 def test_sixteen_characters_are_accepted(client):
     connection_id, _ = _connect(client)
     response = _put(client, connection_id, "bob", "label-key-1", {"label": "가" * 16})

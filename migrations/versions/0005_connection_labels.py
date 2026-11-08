@@ -22,8 +22,11 @@ branch_labels = None
 depends_on = None
 
 # 1-16 characters after trimming, no control characters (the API normalizes first).
+# An explicit C0/DEL/C1 range, identical to the API pattern: [[:cntrl:]] depends on the
+# server locale and could reject a label the API accepted (a 500 instead of a 422).
 LABEL_CHECK = (
-    "char_length({col}) BETWEEN 1 AND 16 AND {col} = btrim({col}) AND {col} !~ '[[:cntrl:]]'"
+    "char_length({col}) BETWEEN 1 AND 16 AND {col} = btrim({col})"
+    " AND {col} !~ '[\\x01-\\x1f\\x7f-\\x9f]'"
 )
 
 
