@@ -11,6 +11,11 @@ Every query runs in a READ ONLY transaction. Table names are matched against the
 tables in ``public`` before being quoted as identifiers. Rows go only to the invoker's
 response; logs contain only the action, the table name and the row count.
 
+Secrets and private values never leave the database (#61 review): ``*_hash`` columns and
+binary values are always replaced with ``REDACTED`` (an invite code hash could be brute
+forced offline), private labels and names are replaced unless the event says
+``"reveal_private": true``, and long text is cut to ``MAX_TEXT`` characters.
+
 Run locally:  DATABASE_URL=... python -m umsal_backend.db_inspect tables
               DATABASE_URL=... python -m umsal_backend.db_inspect rows users 5
 """
@@ -32,7 +37,11 @@ from umsal_backend.db import database_from_env
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
+MAX_TEXT = 200
 SCHEMA = "public"
+REDACTED = "<redacted>"
+# Values only their owner should see (D10 labels, profile names).
+PRIVATE_COLUMNS = frozenset({"label", "inviter_label", "display_name"})
 
 
 class InspectRequestError(ValueError):
@@ -52,9 +61,9 @@ def _primary_key(connection: psycopg.Connection, table: str) -> list[str]:
     rows = connection.execute(
         "SELECT a.attname FROM pg_index i "
         "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
-        "WHERE i.indrelid = %s::regclass AND i.indisprimary "
-        "ORDER BY array_position(i.indkey, a.attnum)",
-        (f"{SCHEMA}.{table}",),
+        "WHERE i.indrelid = to_regclass(quote_ident(%s) || '.' || quote_ident(%s)) "
+        "AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum)",
+        (SCHEMA, table),
     ).fetchall()
     return [row[0] for row in rows]
 
@@ -73,6 +82,16 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _shown(column: str, value: Any, reveal_private: bool) -> Any:
+    if column.endswith("_hash") or isinstance(value, bytes | memoryview):
+        return None if value is None else REDACTED
+    if column in PRIVATE_COLUMNS and not reveal_private:
+        return None if value is None else REDACTED
+    if isinstance(value, str) and len(value) > MAX_TEXT:
+        return value[:MAX_TEXT] + "…"
+    return _jsonable(value)
+
+
 def list_tables(connection: psycopg.Connection) -> dict[str, Any]:
     counts = {}
     for table in _tables(connection):
@@ -81,7 +100,9 @@ def list_tables(connection: psycopg.Connection) -> dict[str, Any]:
     return {"action": "tables", "tables": counts}
 
 
-def table_rows(connection: psycopg.Connection, table: str, limit: int) -> dict[str, Any]:
+def table_rows(
+    connection: psycopg.Connection, table: str, limit: int, reveal_private: bool = False
+) -> dict[str, Any]:
     if table not in _tables(connection):
         raise InspectRequestError(f"Unknown table in schema {SCHEMA}.")
     key = _primary_key(connection, table)
@@ -93,7 +114,13 @@ def table_rows(connection: psycopg.Connection, table: str, limit: int) -> dict[s
     query = sql.SQL("SELECT * FROM {}{} LIMIT %s").format(sql.Identifier(SCHEMA, table), order)
     cursor = connection.execute(query, (limit,))
     columns = [column.name for column in cursor.description]
-    rows = [dict(zip(columns, map(_jsonable, row), strict=True)) for row in cursor.fetchall()]
+    rows = [
+        {
+            column: _shown(column, value, reveal_private)
+            for column, value in zip(columns, row, strict=True)
+        }
+        for row in cursor.fetchall()
+    ]
     return {"action": "rows", "table": table, "columns": columns, "limit": limit, "rows": rows}
 
 
@@ -115,9 +142,12 @@ def inspect(connection: psycopg.Connection, event: Any) -> dict[str, Any]:
         table, limit = event.get("table"), _limit(event)
         if not isinstance(table, str) or not table:
             raise InspectRequestError("rows needs a table name.")
+        reveal = event.get("reveal_private", False)
+        if not isinstance(reveal, bool):
+            raise InspectRequestError("reveal_private must be true or false.")
 
         def work(conn: psycopg.Connection) -> dict[str, Any]:
-            return table_rows(conn, table, limit)
+            return table_rows(conn, table, limit, reveal)
     else:
         raise InspectRequestError('action must be "tables" or "rows".')
 

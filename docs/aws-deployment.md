@@ -178,7 +178,8 @@ umsal-pwa 이슈 #114, PR #115(병합 `057fd4e`, 2026-11-08)로 PWA CloudFront �
 
 이슈 #60. VPC 안 RDS를 운영자가 `aws lambda invoke`로 읽기 전용 조회한다. 코드는 [db_inspect.py](../src/umsal_backend/db_inspect.py), 템플릿은 [db-inspect.yaml](../infra/aws/db-inspect.yaml)(스택 `umsal-backend-db-inspect`, API Gateway 없음, `umsal_app`만 `rds-db:connect`).
 
-- 요청: `{"action": "tables"}`(테이블별 행 수), `{"action": "rows", "table": "users", "limit": 20}`(최대 100행). 임의 SQL은 받지 않고 READ ONLY 트랜잭션에서 실행한다. 로그에는 동작·테이블·행 수만 남긴다.
+- 요청: `{"action": "tables"}`(테이블별 행 수), `{"action": "rows", "table": "users", "limit": 20}`(최대 100행). 임의 SQL은 받지 않고 READ ONLY 트랜잭션에서 실행한다. 로그에는 동작·테이블·행 수만 남긴다. 응답에서 `*_hash` 열과 바이너리 값은 항상 `<redacted>`(초대 코드 해시의 오프라인 대입 방지), 호칭·표시 이름(`label`·`inviter_label`·`display_name`)은 `"reveal_private": true`일 때만 보이며, 긴 글은 200자에서 자른다(#61 보안 검토).
+- 호출 권한: 리소스 정책·API Gateway가 없어 같은 계정에서 `lambda:InvokeFunction` 권한이 있는 IAM 주체만 호출할 수 있다(관리자 포함). 행 내용을 읽을 수 있는 도구이므로 운영자 외에는 이 권한을 주지 않는다. DB 사용자는 앱과 같은 `umsal_app`이고 쓰기 차단은 READ ONLY 트랜잭션에 의존한다(전용 SELECT 전용 역할은 후속).
 - 호출: `aws lambda invoke $P --function-name umsal-backend-db-inspect --cli-binary-format raw-in-base64-out --payload '{"action":"tables"}' out.json`. 응답에는 행 내용이 있으므로 `out.json`은 확인 후 지운다.
 - 2026-11-06 배포: commit `c1dfda7`. 업로드 속도(약 35KB/s) 때문에 API zip에서 Lambda 런타임이 제공하는 boto3·botocore와 DB 경로가 쓰지 않는 cryptography를 뺀 `lambda/<SHA>-inspect.zip`(9MB)을 썼다. change set은 `InspectFunction`·`InspectLog`·`InspectRole` 추가만, `CREATE_COMPLETE`.
 - 확인: `tables` → `alembic_version 1, users 1`, 나머지 0. `rows`(`users`)는 합성 계정 1행. `pg_roles` 요청은 `Unknown table in schema public.`로 거부.
