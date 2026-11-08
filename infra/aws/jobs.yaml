@@ -195,7 +195,8 @@ Resources:
       Architectures: [x86_64]
       Handler: umsal_backend.maintenance.scheduled_handler
       MemorySize: 256
-      Timeout: 60
+      # The 15-minute recording sweep shares this function with the daily purge (#70).
+      Timeout: 180
       ReservedConcurrentExecutions: 1
       Role: !GetAtt MaintenanceRole.Arn
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ApiArtifactKey}

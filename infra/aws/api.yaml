@@ -78,6 +78,8 @@ Parameters:
     AllowedPattern: '^([A-Za-z0-9_.-]{3,255})?$'
     Description: >-
       Stage 3 (#52). ResultsTableName output of umsal-backend-storage (empty = no table).
+      Grants dynamodb:DescribeTable on this one table for the readiness check, and result
+      item access only with AudioBucketName (RecordingStorage).
   AudioBucketName:
     Type: String
     Default: ''
@@ -85,7 +87,6 @@ Parameters:
     Description: >-
       MVP recordings (#70). AudioBucketName output of umsal-backend-storage (empty = no
       upload API permissions).
-      Grants only dynamodb:DescribeTable on this one table, for the readiness check.
 Conditions:
   UseVpc: !Not [!Equals [!Ref SubnetIds, '']]
   UseDatabase: !Not [!Equals [!Ref DbHost, '']]

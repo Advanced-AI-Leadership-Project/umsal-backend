@@ -16,6 +16,8 @@ Parameters:
   UploadOrigins:
     Type: CommaDelimitedList
     Default: 'http://127.0.0.1:5173,http://127.0.0.1:4175'
+    # Exact origins only: no wildcard, no path. Deploy with the PWA CloudFront origin.
+    AllowedPattern: '^https?://[A-Za-z0-9.:-]+(,https?://[A-Za-z0-9.:-]+)*$'
     Description: >-
       Exact browser origins allowed to PUT audio with a presigned URL (#70): the PWA
       CloudFront address and local development. CORS is not access control; the

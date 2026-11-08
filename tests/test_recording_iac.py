@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -50,8 +51,12 @@ def test_audio_bucket_allows_only_presigned_browser_puts():
         "x-amz-sdk-checksum-algorithm",
     }
     assert "x-amz-version-id" in rule["ExposedHeaders"]
-    origins = _load("storage.yaml")["Parameters"]["UploadOrigins"]["Default"]
-    assert "*" not in origins
+    parameter = _load("storage.yaml")["Parameters"]["UploadOrigins"]
+    assert "*" not in parameter["Default"]
+    pattern = re.compile(parameter["AllowedPattern"])
+    assert pattern.fullmatch("https://d86lxzcp0rvt4.cloudfront.net,http://127.0.0.1:5173")
+    for bad in ("*", "https://*.cloudfront.net", "https://x.test/path", ""):
+        assert not pattern.fullmatch(bad)
 
 
 @pytest.mark.parametrize(
