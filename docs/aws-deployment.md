@@ -22,7 +22,7 @@ flowchart LR
 - API 접근 로그는 요청 ID·경로 키·상태·응답 길이만 남긴다. 헤더·본문·쿼리·IP는 남기지 않는다.
 - 스로틀링은 실수로 인한 비용을 줄이는 장치이며 절대 비용 상한이 아니다. Lambda 동시 실행이 5로 묶여 있어 동시 요청이 5를 넘으면 API Gateway 한도(burst 10) 안이라도 일부 요청이 5xx로 실패할 수 있다. 1단계에서는 의도한 제한이다.
 - Lambda zip에는 Git이 추적하는 `src/umsal_backend` 파일만 들어간다. 무시 대상 로컬 파일(`.env` 등)은 포함하지 않는다.
-- FastAPI 기본 `/docs`·`/openapi.json`도 같은 주소에서 열린다. 업무 API 배포 전(D3)에 비활성화나 보호를 정한다.
+- FastAPI 기본 `/docs`·`/redoc`·`/openapi.json`은 `UMSAL_ENV`가 `local`일 때만 열린다(#66). 배포 환경은 404이며, 계약 원본은 [contracts/openapi.yaml](../contracts/openapi.yaml)이다.
 
 ## 배포 절차
 

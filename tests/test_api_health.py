@@ -79,3 +79,15 @@ def test_unknown_dependency_is_rejected():
 def test_health_routes_are_in_openapi():
     paths = TestClient(create_app()).get("/openapi.json").json()["paths"]
     assert {"/health", "/api/health/live", "/api/health/ready"} <= set(paths)
+
+
+def test_interactive_docs_are_local_only(monkeypatch):
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert TestClient(create_app()).get(path).status_code == 200
+    monkeypatch.setenv("UMSAL_ENV", "dev")
+    deployed = TestClient(create_app())
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert deployed.get(path).status_code == 404
+    assert deployed.get("/api/health/live").status_code == 200
+    # The parity tests read the schema in-process, which must keep working.
+    assert "/api/health/ready" in create_app().openapi()["paths"]

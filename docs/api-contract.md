@@ -2,13 +2,13 @@
 
 2026-11-04 · 이슈 #9 · 대응: umsal-pwa #20 (DEV-04)
 
-**초안이다.** 업무 API의 구현 여부는 2절 표를 따른다(일부만 구현). "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9·D11·D12를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 계약 원본은 2026-11-05부터 이 저장소 [`contracts/`](../contracts/openapi.yaml)(v0.3.0, #25)이고, 확정 결정 중 D2·D3·D7을 반영했다. 이 문서는 원안과의 차이와 결정 기록이다.
+**초안이다.** 업무 API의 구현 여부는 2절 표를 따른다(일부만 구현). "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9·D10·D11·D12를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 계약 원본은 2026-11-05부터 이 저장소 [`contracts/`](../contracts/openapi.yaml)(v0.4.0, 이관 #25)이고, 확정 결정 중 D2·D3·D7·D10을 반영했다. 이 문서는 원안과의 차이와 결정 기록이다.
 
 ## 1. 기준 원본
 
 | 항목 | 값 |
 |---|---|
-| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.3.0, 26 paths / 31 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7) 추가. 정적 검사는 `tests/test_contracts.py` |
+| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.4.0, 27 paths / 32 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7), 연결별 호칭 `PUT /connections/{id}/label`(D10, 0.4.0) 추가. 정적 검사는 `tests/test_contracts.py` |
 | 이관 전 원안 | umsal-pwa [`contracts/openapi.yaml`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/contracts/openapi.yaml) v0.2.0, 23 paths / 28 operations |
 | 설계 설명 | umsal-pwa [`docs/design/09_API_계약_및_데이터설계.md`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/docs/design/09_API_%EA%B3%84%EC%95%BD_%EB%B0%8F_%EB%8D%B0%EC%9D%B4%ED%84%B0%EC%84%A4%EA%B3%84.md) (2026-10-27 Android 원안) |
 | 고정 commit | `e54088b9489d67ab3269cb626c860d3b0a4bf79e` (umsal-pwa main, 2026-11-04 조회) |
@@ -19,7 +19,7 @@
 | 구분 | 경로 | 위치 | 상태 |
 |---|---|---|---|
 | 실행 | `GET /health` | umsal-backend | 구현. 배포 확인용, 프로세스 생존만 응답 |
-| 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-backend | 구현(D2, #17). ready의 Aurora·DynamoDB 확인은 연결 구현 전이라 `not_configured` → 503 |
+| 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-backend | 구현(D2, #17). ready는 PostgreSQL·DynamoDB 확인을 실행하며 배포 환경은 3단계(2026-11-05)부터 200 |
 | 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-pwa `services/api` | 구현. ready는 로컬 PostgreSQL `SELECT 1` |
 | 실행 | `GET /api/push/config`, `POST·DELETE /api/push/subscription`, `POST /api/push/test` | umsal-pwa `services/api` | 테스트 채널만 구현(기본 비활성) |
 | 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | umsal-backend (D1 확정) | `getMe`·`listConnections`·`getConnection`(#29), `createInvitation`·`acceptInvitation`(#31), `getConsents`·`updateConsents`(#34), `disconnect`(#36), `setConnectionLabel`(#62) 구현, 나머지 미구현 |
@@ -101,7 +101,7 @@ umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변�
 1. OpenAPI를 바꾸는 PR은 같은 PR에서 관련 JSON 예시(`contracts/examples`)와 정적 계약 검사를 갱신한다.
 2. 필드 삭제·이름 변경·enum 값 삭제·필수 필드 추가는 호환성을 깨는 변경이다. `info.version`의 주 버전을 올리고, PR에 PWA 측 후속 작업을 적는다(AGENTS "환경과 계약").
 3. 선택 필드·enum 값 추가는 부 버전을 올린다. PWA는 모르는 enum 값을 "알 수 없음"으로 표시하고 정상으로 해석하지 않는다.
-4. FastAPI가 내보내는 `/openapi.json`과 원본 계약의 차이를 CI에서 비교한다. 차이가 있으면 구현 또는 계약 중 하나를 고친다. **구현(#36):** `tests/test_contract_parity.py`가 `/api` 아래 구현 operation의 operationId·메서드·경로·성공 코드·`Idempotency-Key` 필수 여부를 계약과 비교하고, 계약에 없는 operation을 거부한다. 요청·응답 본문 스키마는 엔드포인트 테스트의 `contract_schema` 검사로 확인한다
+4. FastAPI가 생성하는 스키마(`app.openapi()`. HTTP `/openapi.json`은 로컬에서만 공개, #66)와 원본 계약의 차이를 CI에서 비교한다. 차이가 있으면 구현 또는 계약 중 하나를 고친다. **구현(#36):** `tests/test_contract_parity.py`가 `/api` 아래 구현 operation의 operationId·메서드·경로·성공 코드·`Idempotency-Key` 필수 여부를 계약과 비교하고, 계약에 없는 operation을 거부한다. 요청·응답 본문 스키마는 엔드포인트 테스트의 `contract_schema` 검사로 확인한다
 5. 프런트 타입은 원본 계약에서 생성하고 손으로 고치지 않는다.
 6. JSON Schema 검증은 필드·형식만 확인한다. 권한·경합·동의 같은 의미 검사는 서버 테스트로 따로 검증한다.
 

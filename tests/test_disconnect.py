@@ -178,3 +178,40 @@ def test_disconnect_and_consent_update_race_never_leaves_an_active_grant(
             (connected,),
         ).fetchone()
     assert allowed == (0,)  # whichever ran first, the final state is fully revoked
+
+
+@pytest.mark.parametrize(
+    ("disconnecter", "reinviter"), [("alice", "alice"), ("bob", "bob"), ("alice", "bob")]
+)
+def test_labelled_reconnect_after_disconnect(client, disconnecter, reinviter):
+    """Real-world order: labelled invite, accept, disconnect, labelled re-invite, accept."""
+    first = client.post(
+        "/api/invitations", headers=_h("alice", "invite-1"), json={"label": "아들"}
+    ).json()
+    old = client.post(
+        f"/api/invitations/{first['invitation_id']}/accept",
+        headers=_h("bob", "accept-1"),
+        json={"invite_code": first["invite_code"], "label": "엄마"},
+    ).json()["connection_id"]
+    assert _delete(client, old, disconnecter, "delete-1").status_code == 202
+    accepter = "bob" if reinviter == "alice" else "alice"
+    ticket = client.post(
+        "/api/invitations", headers=_h(reinviter, "invite-2"), json={"label": "가족"}
+    )
+    assert ticket.status_code == 201, ticket.text
+    ticket = ticket.json()
+    response = client.post(
+        f"/api/invitations/{ticket['invitation_id']}/accept",
+        headers=_h(accepter, "accept-2"),
+        json={"invite_code": ticket["invite_code"], "label": "가족2"},
+    )
+    assert response.status_code == 200, response.text
+    new = response.json()
+    assert new["connection_id"] != old and new["status"] == "ACTIVE" and new["label"] == "가족2"
+    for sub in ("alice", "bob"):
+        listed = client.get("/api/connections", headers=_h(sub)).json()["items"]
+        statuses = {item["connection_id"]: item["status"] for item in listed}
+        assert statuses == {old: "DISCONNECTED", new["connection_id"]: "ACTIVE"}
+    # The re-inviter's label from the new invitation is kept on its own side.
+    mine = client.get("/api/connections", headers=_h(reinviter)).json()["items"]
+    assert {i["connection_id"]: i["label"] for i in mine}[new["connection_id"]] == "가족"
