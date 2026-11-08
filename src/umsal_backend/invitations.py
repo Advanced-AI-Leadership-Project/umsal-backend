@@ -26,6 +26,7 @@ from umsal_backend.db import Db
 from umsal_backend.errors import ApiError
 from umsal_backend.idempotency import IdempotencyKey, run_idempotent
 from umsal_backend.identity import CurrentUser
+from umsal_backend.labels import Label, store_label
 
 INVITATION_LIFETIME = timedelta(hours=24)
 # Crockford base32 without I, L, O, U: easy to read aloud or type on a phone.
@@ -36,6 +37,8 @@ CODE_ATTEMPTS = 3
 
 class InvitationRequest(BaseModel):
     model_config = {"extra": "forbid", "strict": True}
+    # How the inviter will call the invitee once connected (D10).
+    label: Label | None = None
     demo: bool | None = None
 
 
@@ -48,6 +51,8 @@ class InvitationTicket(BaseModel):
 class AcceptInvitation(BaseModel):
     model_config = {"extra": "forbid", "strict": True}
     invite_code: str = Field(min_length=6, max_length=64)
+    # How the invitee will call the inviter (D10).
+    label: Label | None = None
     demo: bool | None = None
 
 
@@ -82,7 +87,9 @@ def create_invitation(
     idempotency_key: IdempotencyKey,
     body: InvitationRequest | None = None,
 ):
-    payload = (body or InvitationRequest()).model_dump(exclude_none=True)
+    request = body or InvitationRequest()
+    payload = request.model_dump(exclude_none=True)
+    body_label = request.label
 
     def handler() -> tuple[int, InvitationTicket]:
         # code_hash is unique; a 50-bit collision is improbable but must not be a 500.
@@ -91,9 +98,10 @@ def create_invitation(
             try:
                 with db.transaction():  # savepoint per attempt
                     invitation_id, expires_at = db.execute(
-                        "INSERT INTO invitations (code_hash, inviter_id, expires_at) "
-                        "VALUES (%s, %s, now() + %s) RETURNING id, expires_at",
-                        (code_hash(code), user.user_id, INVITATION_LIFETIME),
+                        "INSERT INTO invitations"
+                        " (code_hash, inviter_id, expires_at, inviter_label)"
+                        " VALUES (%s, %s, now() + %s, %s) RETURNING id, expires_at",
+                        (code_hash(code), user.user_id, INVITATION_LIFETIME, body_label),
                     ).fetchone()
             except psycopg.errors.UniqueViolation:
                 continue
@@ -137,8 +145,8 @@ def accept_invitation(
         if stored is None or not hmac.compare_digest(bytes(stored[0]), code_hash(body.invite_code)):
             raise _not_found()
         # Then lock the invitation so two concurrent accepts cannot both succeed.
-        inviter_id, expired, accepted_by = db.execute(
-            "SELECT inviter_id, expires_at <= now(), accepted_by "
+        inviter_id, expired, accepted_by, inviter_label = db.execute(
+            "SELECT inviter_id, expires_at <= now(), accepted_by, inviter_label "
             "FROM invitations WHERE id = %s FOR UPDATE",
             (invitation_id,),
         ).fetchone()
@@ -167,6 +175,11 @@ def accept_invitation(
         )
         # Accepting is not consent (FR-02): both directions start fully denied.
         create_default_grants(db, connection_id, inviter_id, user.user_id)
+        # Each side's label is private to that side (D10).
+        if inviter_label is not None:
+            store_label(db, connection_id, inviter_id, inviter_label)
+        if body.label is not None:
+            store_label(db, connection_id, user.user_id, body.label)
         return 200, load_connection(db, connection_id, user.user_id)
 
     return run_idempotent(

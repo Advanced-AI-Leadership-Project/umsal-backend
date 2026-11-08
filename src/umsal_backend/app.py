@@ -6,7 +6,15 @@ from collections.abc import Mapping
 
 from fastapi import FastAPI
 
-from umsal_backend import __version__, connections, consents, disconnect, identity, invitations
+from umsal_backend import (
+    __version__,
+    connections,
+    consents,
+    disconnect,
+    identity,
+    invitations,
+    labels,
+)
 from umsal_backend.auth import TokenVerifier
 from umsal_backend.db import DatabaseTarget, as_target, database_from_env, postgres_probe
 from umsal_backend.dynamo import dynamodb_probe_from_env
@@ -55,6 +63,7 @@ def create_app(
     app.include_router(invitations.router)
     app.include_router(consents.router)
     app.include_router(disconnect.router)
+    app.include_router(labels.router)
     return app
 
 

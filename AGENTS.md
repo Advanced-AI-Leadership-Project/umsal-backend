@@ -8,7 +8,7 @@
 1. 사용자의 최신 요청과 `git status --short --branch`를 확인한다. 무관한 변경을 덮어쓰지 않는다.
 2. SPEC의 현재 범위와 관련 코드·테스트를 읽고 작은 단위로 작업한다. 작업은 이슈에 연결한 `codex/<이슈번호>-<작업명>` 브랜치에서 진행한다.
 3. `src/umsal_backend`는 FastAPI 앱, `src/umsal_backend/lambda_handler.py`는 API Gateway → Lambda 진입점, `tests`는 앱 테스트, `tools`는 Git·CI 하네스, `infra/aws`는 CloudFormation 템플릿과 Lambda 빌드 스크립트다(절차는 `docs/aws-deployment.md`). `migrations`는 Alembic 마이그레이션, `compose.yaml`은 로컬 PostgreSQL이다.
-4. 현재 구현은 health(`/health`, `/api/health/{live,ready}`), Cognito 토큰 검증(`auth.py`), 사용자·관계 조회 API(`/api/me`, `/api/connections`), 초대 생성·수락 API(`/api/invitations`), 동의 조회·변경 API(`/api/connections/{id}/consents`), 연결 해제(`DELETE /api/connections/{id}`)까지다. 녹음·분석 업무 API, AWS Aurora·DynamoDB·S3 저장은 아직 구현되지 않았다. 저장소별 역할은 SPEC의 "저장 계층"을 따른다. 목표 설계를 구현 완료로 보고하지 않는다.
+4. 현재 구현은 health(`/health`, `/api/health/{live,ready}`), Cognito 토큰 검증(`auth.py`), 사용자·관계 조회 API(`/api/me`, `/api/connections`), 초대 생성·수락 API(`/api/invitations`), 동의 조회·변경 API(`/api/connections/{id}/consents`), 연결 해제(`DELETE /api/connections/{id}`), 연결별 호칭(`PUT /api/connections/{id}/label`)까지다. 녹음·분석 업무 API, AWS Aurora·DynamoDB·S3 저장은 아직 구현되지 않았다. 저장소별 역할은 SPEC의 "저장 계층"을 따른다. 목표 설계를 구현 완료로 보고하지 않는다.
 
 ## 환경과 계약
 

@@ -134,7 +134,7 @@ def test_local_refs_resolve(contract):
 
 def test_version_and_server_prefix(contract):
     spec = contract["spec"]
-    assert spec["info"]["version"] == "0.3.0"
+    assert spec["info"]["version"] == "0.4.0"
     assert spec["servers"] == [{"url": "/api", "description": spec["servers"][0]["description"]}]
 
 
@@ -150,8 +150,9 @@ def test_operations_have_expected_auth_and_unique_ids(contract):
         assert operation["security"] == expected, f"Wrong auth: {method} {path}"
     ids = [operation["operationId"] for _path, _method, operation in operations]
     assert len(ids) == len(set(ids)), "Duplicate operationId"
-    # 28 operations from umsal-pwa v0.2.0 + health live/ready (D2) + listConnections (D7).
-    assert len(ids) == 31
+    # 28 operations from umsal-pwa v0.2.0 + health live/ready (D2) + listConnections (D7)
+    # + setConnectionLabel (D10).
+    assert len(ids) == 32
     assert {"getHealthLive", "getHealthReady", "listConnections"} <= set(ids)
 
 
