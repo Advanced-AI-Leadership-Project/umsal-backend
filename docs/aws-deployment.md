@@ -160,7 +160,7 @@ umsal-pwa 이슈 #114, PR #115(병합 `057fd4e`, 2026-11-08)로 PWA CloudFront �
 | 순서 | 동작 | 결과 |
 |---|---|---|
 | 1 | API·migrate zip 빌드·업로드 | `lambda/110b6b4….zip`(30,814,696바이트), `lambda/110b6b4…-migrate.zip`(35,977,544바이트) |
-| 2 | `stage2_params.py --with-storage` | `jobs-params.json`·`api-params.json` 재생성(JWKS 키 2개 그대로) |
+| 2 | `stage2_params.py --with-storage` | `jobs-params.json`·`api-params.json` 재생성(JWKS 키 2개) |
 | 3 | `umsal-backend-jobs` 갱신 | change set은 `MigrationFunction`·`MaintenanceFunction`의 `Code`만 수정(교체 없음), `UPDATE_COMPLETE`. 이전 코드는 `35b9dec` |
 | 4 | 마이그레이션 Lambda invoke | `{"before": "0004", "after": "0005"}` |
 | 5 | `umsal-backend-api` 갱신 | change set은 `ApiFunction`의 `Code`만 수정(교체 없음), `UPDATE_COMPLETE`. 이전 코드는 `723142a` |
@@ -172,7 +172,7 @@ umsal-pwa 이슈 #114, PR #115(병합 `057fd4e`, 2026-11-08)로 PWA CloudFront �
 | `PUT /api/connections/{id}/label` (토큰 없음, CloudFront) | 401 |
 
 - 실제 계정 토큰으로 호칭을 저장·조회하는 확인은 PWA 가족 화면(umsal-pwa #120) 배포 뒤 사용자가 한다.
-- `aws cloudformation deploy`에 `--tags Project=umsal-backend`를 빼면 change set이 모든 자원의 `Project` 태그를 지우는 수정으로 잡힌다. 이번에도 첫 change set에서 이를 발견해 실행하지 않고 지운 뒤 태그를 넣어 다시 만들었다. 실행 전에 `describe-change-set --include-property-values`로 `Tags` 변경이 없는지 본다.
+- `aws cloudformation deploy`에 `--tags Project=umsal-backend`를 빼면 change set이 모든 자원의 `Project` 태그를 지우는 수정으로 잡힌다. 이번에 첫 change set에서 이를 발견해 실행하지 않고 지운 뒤 태그를 넣어 다시 만들었다. 실행 전에 `describe-change-set --include-property-values`로 `Tags` 변경이 없는지 본다.
 
 ## 다음 단계
 
