@@ -14,7 +14,7 @@
 
 - Python `.python-version`, `pyproject.toml`의 uv `required-version`, `uv.lock`을 유지한다. 의존성 변경은 필요한 범위에 한정하고 `uv lock`으로 잠금 파일을 함께 갱신한다.
 - 가상환경·캐시·빌드 산출물(`.venv`, `.aws-sam`, `cdk.out` 등)을 커밋하지 않는다.
-- 목표 API 계약 원본은 `contracts/openapi.yaml`이고 실행 API 계약은 FastAPI의 `/openapi.json`이다. 계약이나 구현 operation을 바꾸면 같은 PR에서 예시·`tests/test_contracts.py`·`tests/test_contract_parity.py`를 갱신하고 `docs/api-contract.md` 6절의 버전 규칙을 따른다. PWA와 공유하는 경로·필드를 바꾸면 PR에 호환성 영향과 PWA 측 후속 작업을 적는다.
+- 목표 API 계약 원본은 `contracts/openapi.yaml`이고 실행 API 계약은 FastAPI가 생성하는 스키마(`app.openapi()`, 로컬에서만 `/openapi.json`으로 공개)다. 계약이나 구현 operation을 바꾸면 같은 PR에서 예시·`tests/test_contracts.py`·`tests/test_contract_parity.py`를 갱신하고 `docs/api-contract.md` 6절의 버전 규칙을 따른다. PWA와 공유하는 경로·필드를 바꾸면 PR에 호환성 영향과 PWA 측 후속 작업을 적는다.
 - 앱 코드는 AWS 자격 증명을 코드·설정 파일에 넣지 않는다. Lambda 실행 역할과 환경 변수로 주입한다.
 - 로컬 테스트는 AWS에 접속하지 않는다. AWS 연동 코드는 합성 이벤트·스텁·모의 객체로 검증한다.
 

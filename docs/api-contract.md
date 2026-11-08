@@ -101,7 +101,7 @@ umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변�
 1. OpenAPI를 바꾸는 PR은 같은 PR에서 관련 JSON 예시(`contracts/examples`)와 정적 계약 검사를 갱신한다.
 2. 필드 삭제·이름 변경·enum 값 삭제·필수 필드 추가는 호환성을 깨는 변경이다. `info.version`의 주 버전을 올리고, PR에 PWA 측 후속 작업을 적는다(AGENTS "환경과 계약").
 3. 선택 필드·enum 값 추가는 부 버전을 올린다. PWA는 모르는 enum 값을 "알 수 없음"으로 표시하고 정상으로 해석하지 않는다.
-4. FastAPI가 내보내는 `/openapi.json`과 원본 계약의 차이를 CI에서 비교한다. 차이가 있으면 구현 또는 계약 중 하나를 고친다. **구현(#36):** `tests/test_contract_parity.py`가 `/api` 아래 구현 operation의 operationId·메서드·경로·성공 코드·`Idempotency-Key` 필수 여부를 계약과 비교하고, 계약에 없는 operation을 거부한다. 요청·응답 본문 스키마는 엔드포인트 테스트의 `contract_schema` 검사로 확인한다
+4. FastAPI가 생성하는 스키마(`app.openapi()`. HTTP `/openapi.json`은 로컬에서만 공개, #66)와 원본 계약의 차이를 CI에서 비교한다. 차이가 있으면 구현 또는 계약 중 하나를 고친다. **구현(#36):** `tests/test_contract_parity.py`가 `/api` 아래 구현 operation의 operationId·메서드·경로·성공 코드·`Idempotency-Key` 필수 여부를 계약과 비교하고, 계약에 없는 operation을 거부한다. 요청·응답 본문 스키마는 엔드포인트 테스트의 `contract_schema` 검사로 확인한다
 5. 프런트 타입은 원본 계약에서 생성하고 손으로 고치지 않는다.
 6. JSON Schema 검증은 필드·형식만 확인한다. 권한·경합·동의 같은 의미 검사는 서버 테스트로 따로 검증한다.
 

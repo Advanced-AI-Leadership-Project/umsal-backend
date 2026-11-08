@@ -89,3 +89,5 @@ def test_interactive_docs_are_local_only(monkeypatch):
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert deployed.get(path).status_code == 404
     assert deployed.get("/api/health/live").status_code == 200
+    # The parity tests read the schema in-process, which must keep working.
+    assert "/api/health/ready" in create_app().openapi()["paths"]
