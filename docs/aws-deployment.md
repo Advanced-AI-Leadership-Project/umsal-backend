@@ -1,6 +1,6 @@
 # 백엔드 API AWS 배포 (1·2·3단계)
 
-기준일: 2026-11-05 · 이슈 #19(1단계), #49(2단계 기록), #54(3단계 기록). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). 3단계에서 DynamoDB 테이블과 원음 S3 버킷(기반만)을 만들어 ready가 200이 됐다([3단계 배포 기록](#3단계-배포-기록)). CloudFront 연결은 아직 없다. 아래 구조·절차는 1단계 기준이다.
+기준일: 2026-11-08 · 이슈 #19(1단계), #49(2단계 기록), #54(3단계 기록), #62(호칭 배포). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). 3단계에서 DynamoDB 테이블과 원음 S3 버킷(기반만)을 만들어 ready가 200이 됐다([3단계 배포 기록](#3단계-배포-기록)). 2026-11-08부터 PWA CloudFront의 `/api/*`(푸시 `/api/push/*` 제외)가 이 API로 간다([CloudFront 연결](#cloudfront-연결-umsal-pwa-115)). 아래 구조·절차는 1단계 기준이다.
 
 ## 구조
 
@@ -18,7 +18,7 @@ flowchart LR
 | `umsal-backend-storage` (3단계) | [infra/aws/storage.yaml](../infra/aws/storage.yaml) | DynamoDB 결과 테이블, 원음 S3 버킷과 정책(둘 다 `Retain`). 2단계 스택은 [2단계 배포 기록](#2단계-배포-기록) 참고 |
 
 - 프로젝트 계정, 선택 리전 `ap-southeast-2`. umsal-pwa 스택(`umsal-pwa-demo*`, `umsal-demo-storage`)과 그 CloudFront는 건드리지 않는다.
-- 직접 API 주소는 네트워크 제한 없이 열려 있다. 2단계부터 health를 뺀 업무 경로는 Cognito access token이 필요하다(D3). CloudFront `/api/*` 연결 방식은 아직 umsal-pwa와 정해야 한다.
+- 직접 API 주소는 네트워크 제한 없이 열려 있다. 2단계부터 health를 뺀 업무 경로는 Cognito access token이 필요하다(D3). PWA CloudFront `/api/*`도 같은 API로 연결돼 있다(umsal-pwa #115).
 - API 접근 로그는 요청 ID·경로 키·상태·응답 길이만 남긴다. 헤더·본문·쿼리·IP는 남기지 않는다.
 - 스로틀링은 실수로 인한 비용을 줄이는 장치이며 절대 비용 상한이 아니다. Lambda 동시 실행이 5로 묶여 있어 동시 요청이 5를 넘으면 API Gateway 한도(burst 10) 안이라도 일부 요청이 5xx로 실패할 수 있다. 1단계에서는 의도한 제한이다.
 - Lambda zip에는 Git이 추적하는 `src/umsal_backend` 파일만 들어간다. 무시 대상 로컬 파일(`.env` 등)은 포함하지 않는다.
@@ -149,7 +149,31 @@ Cognito managed login(로그인·회원가입 화면)은 `auth.yaml`의 `Brandin
 - 템플릿이 51,200바이트를 넘으면 `aws cloudformation deploy`에 `--s3-bucket`이 필요하다(테스트로 한도 안을 확인).
 - 시연 주소에 `lang=ko`를 붙이면 화면 문구가 한국어로 나온다(managed login 지원 언어).
 
+## CloudFront 연결 (umsal-pwa #115)
+
+umsal-pwa 이슈 #114, PR #115(병합 `057fd4e`, 2026-11-08)로 PWA CloudFront 배포(`d86lxzcp0rvt4.cloudfront.net`)의 경로를 나눴다. `/api/push/*`는 기존 PWA 푸시 API, 나머지 `/api/*`는 이 백엔드 API로 간다. CSP `connect-src`에 Cognito 도메인을 더했다. 변경은 umsal-pwa 스택의 change set(Distribution·SecurityHeaders 수정, 교체 없음)으로 적용했고, 이 저장소의 스택은 바뀌지 않았다. 확인: CloudFront 경유 `/api/health/ready` 200, `/api/push/config` 200, `/api/me` 401.
+
+## 연결별 호칭 배포 기록 (#62)
+
+2026-11-08에 코드 commit `110b6b4522184f1c89a3c31e19c5267cb11e3792`(PR #63, D10)로 진행했다. 템플릿은 바뀌지 않았고 코드와 스키마만 바뀌었다. 새 API 코드는 `connection_labels` 테이블을 쓰므로 마이그레이션을 API 갱신보다 먼저 했다.
+
+| 순서 | 동작 | 결과 |
+|---|---|---|
+| 1 | API·migrate zip 빌드·업로드 | `lambda/110b6b4….zip`(30,814,696바이트), `lambda/110b6b4…-migrate.zip`(35,977,544바이트) |
+| 2 | `stage2_params.py --with-storage` | `jobs-params.json`·`api-params.json` 재생성(JWKS 키 2개) |
+| 3 | `umsal-backend-jobs` 갱신 | change set은 `MigrationFunction`·`MaintenanceFunction`의 `Code`만 수정(교체 없음), `UPDATE_COMPLETE`. 이전 코드는 `35b9dec` |
+| 4 | 마이그레이션 Lambda invoke | `{"before": "0004", "after": "0005"}` |
+| 5 | `umsal-backend-api` 갱신 | change set은 `ApiFunction`의 `Code`만 수정(교체 없음), `UPDATE_COMPLETE`. 이전 코드는 `723142a` |
+
+| 요청(직접 주소와 CloudFront 모두) | 결과 |
+|---|---|
+| `GET /api/health/ready` | 200 `ready`, `database`·`aurora`·`dynamodb` 모두 `ok`. 직접 주소 첫 요청(새 실행 환경) 약 9.3초 |
+| `GET /api/me`, `GET /api/connections` (토큰 없음) | 401 |
+| `PUT /api/connections/{id}/label` (토큰 없음, CloudFront) | 401 |
+
+- 실제 계정 토큰으로 호칭을 저장·조회하는 확인은 PWA 가족 화면(umsal-pwa #120) 배포 뒤 사용자가 한다.
+- `aws cloudformation deploy`에 `--tags Project=umsal-backend`를 빼면 change set이 모든 자원의 `Project` 태그를 지우는 수정으로 잡힌다. 이번에 첫 change set에서 이를 발견해 실행하지 않고 지운 뒤 태그를 넣어 다시 만들었다. 실행 전에 `describe-change-set --include-property-values`로 `Tags` 변경이 없는지 본다.
+
 ## 다음 단계
 
 - 업로드·작업·결과 API(항목 키 설계, S3 CORS·presigned URL, API의 항목·버킷 권한): MVP 범위(D8) 결정 뒤
-- CloudFront `/api/*`를 이 API로 보낼지(경로 분리 포함) umsal-pwa와 조율

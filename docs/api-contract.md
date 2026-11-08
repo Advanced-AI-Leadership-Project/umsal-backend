@@ -25,7 +25,7 @@
 | 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | umsal-backend (D1 확정) | `getMe`·`listConnections`·`getConnection`(#29), `createInvitation`·`acceptInvitation`(#31), `getConsents`·`updateConsents`(#34), `disconnect`(#36), `setConnectionLabel`(#62) 구현, 나머지 미구현 |
 | 목표 | worker operation 4개(`/internal/worker/jobs/{id}/claim·heartbeat·complete·fail`) | umsal-backend (D1 확정) | 미구현 |
 
-PWA 화면은 같은 출처의 `/api/health/{live,ready}`를 호출하고 `service == "api"`, ready의 `checks.database == "ok"`를 확인한다. 이 백엔드도 D2에 따라 같은 경로와 응답 모양을 제공한다. 단, Aurora·DynamoDB 연결 확인을 붙이기 전까지 ready는 503 `not_ready`이므로 PWA의 ready 확인은 실패로 표시된다.
+PWA 화면은 같은 출처의 `/api/health/{live,ready}`를 호출하고 `service == "api"`, ready의 `checks.database == "ok"`를 확인한다. 이 백엔드도 D2에 따라 같은 경로와 응답 모양을 제공한다. 3단계 배포(2026-11-05) 뒤 배포 환경의 ready는 200 `ready`이고, 2026-11-08부터 PWA CloudFront의 같은 출처 `/api/health/*`도 이 백엔드로 간다(umsal-pwa #115).
 
 ## 3. 결정 필요 항목
 

@@ -87,7 +87,7 @@ flowchart LR
 
 ## 4. 코드 변경 목록
 
-**구현(#42):** 1·2·5·6 항목과 정리 작업 스케줄을 코드와 템플릿(`api.yaml` 선택 파라미터, `jobs.yaml`, `build_lambda.py --kind migrate`, `stage2_params.py`)으로 구현했다. **#44:** 4(사용자 생성)를 일회용 `db-bootstrap` 스택으로 구현했다. 8(CloudFront)은 umsal-pwa와 정한 뒤 한다. 2026-11-05 AWS 배포 완료(6절).
+**구현(#42):** 1·2·5·6 항목과 정리 작업 스케줄을 코드와 템플릿(`api.yaml` 선택 파라미터, `jobs.yaml`, `build_lambda.py --kind migrate`, `stage2_params.py`)으로 구현했다. **#44:** 4(사용자 생성)를 일회용 `db-bootstrap` 스택으로 구현했다. 8(CloudFront)은 2026-11-08 umsal-pwa #115로 연결했다([배포 기록](aws-deployment.md#cloudfront-연결-umsal-pwa-115)). 2026-11-05 AWS 배포 완료(6절).
 
 
 1. **IAM 토큰 접속**: `db.connect`가 `DB_HOST`·`DB_USER`·`DB_NAME`·리전으로 `rds.generate_db_auth_token`을 호출해 비밀번호로 쓰고 `sslmode=verify-full`로 접속한다. 토큰은 약 10분 캐시하고, IAM 인증의 신규 연결 속도 한도를 연결 수와 함께 본다. 로컬은 지금처럼 `DATABASE_URL`을 유지한다. `db.py` docstring의 "Secrets Manager 주입" 서술을 고친다.
@@ -98,7 +98,7 @@ flowchart LR
 5. **마이그레이션 Lambda**: Alembic과 `migrations/`를 담는 별도 패키지(현재 Alembic은 개발 의존성이라 API zip에 없다), 핸들러는 `upgrade head`만 수행하고 결과 revision만 로그에 남긴다.
 6. **Lambda 설정**(`api.yaml`): `VpcConfig`(프라이빗 서브넷·Lambda 보안 그룹), `COGNITO_*`·DB 환경 변수, 실행 역할에 `rds-db:connect`와 VPC ENI 권한(`AWSLambdaVPCAccessExecutionRole` 상당의 최소 권한).
 7. **ready 확인**: `checks.aurora`가 같은 IAM 접속을 쓴다. DynamoDB는 3단계까지 `not_configured`라 전체 ready는 계속 503이다.
-8. **CloudFront 연결**: PWA CloudFront의 `/api/*`를 이 API로 보낼지, `/api/push/*`만 PWA 푸시 Lambda에 남길지 umsal-pwa와 정한다.
+8. **CloudFront 연결**: PWA CloudFront의 `/api/*`를 이 API로 보낼지, `/api/push/*`만 PWA 푸시 Lambda에 남길지 umsal-pwa와 정한다. **완료(2026-11-08, umsal-pwa #115):** `/api/push/*`는 푸시 API, 나머지 `/api/*`는 이 API.
 
 ## 5. 배포 순서 초안
 
