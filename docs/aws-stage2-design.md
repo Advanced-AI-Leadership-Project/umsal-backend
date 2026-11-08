@@ -97,7 +97,7 @@ flowchart LR
 4. **앱·마이그레이션 DB 사용자**: 일회용 `umsal-backend-db-bootstrap` 스택의 Lambda가 마스터 비밀번호로 앱 사용자와 마이그레이션 사용자를 만들고 `rds_iam` 역할과 필요한 권한만 준다(2절 표). 마이그레이션 Lambda는 사용자를 만들지 않는다.
 5. **마이그레이션 Lambda**: Alembic과 `migrations/`를 담는 별도 패키지(현재 Alembic은 개발 의존성이라 API zip에 없다), 핸들러는 `upgrade head`만 수행하고 결과 revision만 로그에 남긴다.
 6. **Lambda 설정**(`api.yaml`): `VpcConfig`(프라이빗 서브넷·Lambda 보안 그룹), `COGNITO_*`·DB 환경 변수, 실행 역할에 `rds-db:connect`와 VPC ENI 권한(`AWSLambdaVPCAccessExecutionRole` 상당의 최소 권한).
-7. **ready 확인**: `checks.aurora`가 같은 IAM 접속을 쓴다. DynamoDB는 3단계까지 `not_configured`라 전체 ready는 계속 503이다.
+7. **ready 확인**: `checks.aurora`가 같은 IAM 접속을 쓴다. DynamoDB는 3단계까지 `not_configured`라 전체 ready는 계속 503이다. 3단계(2026-11-05)에서 DynamoDB 확인이 붙어 200이 됐다.
 8. **CloudFront 연결**: PWA CloudFront의 `/api/*`를 이 API로 보낼지, `/api/push/*`만 PWA 푸시 Lambda에 남길지 umsal-pwa와 정한다. **완료(2026-11-08, umsal-pwa #115):** `/api/push/*`는 푸시 API, 나머지 `/api/*`는 이 API.
 
 ## 5. 배포 순서 초안

@@ -8,7 +8,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.3.0, 26 paths / 31 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7) 추가. 정적 검사는 `tests/test_contracts.py` |
+| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.4.0, 27 paths / 32 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7), 연결별 호칭 `PUT /connections/{id}/label`(D10, 0.4.0) 추가. 정적 검사는 `tests/test_contracts.py` |
 | 이관 전 원안 | umsal-pwa [`contracts/openapi.yaml`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/contracts/openapi.yaml) v0.2.0, 23 paths / 28 operations |
 | 설계 설명 | umsal-pwa [`docs/design/09_API_계약_및_데이터설계.md`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/docs/design/09_API_%EA%B3%84%EC%95%BD_%EB%B0%8F_%EB%8D%B0%EC%9D%B4%ED%84%B0%EC%84%A4%EA%B3%84.md) (2026-10-27 Android 원안) |
 | 고정 commit | `e54088b9489d67ab3269cb626c860d3b0a4bf79e` (umsal-pwa main, 2026-11-04 조회) |
@@ -19,7 +19,7 @@
 | 구분 | 경로 | 위치 | 상태 |
 |---|---|---|---|
 | 실행 | `GET /health` | umsal-backend | 구현. 배포 확인용, 프로세스 생존만 응답 |
-| 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-backend | 구현(D2, #17). ready의 Aurora·DynamoDB 확인은 연결 구현 전이라 `not_configured` → 503 |
+| 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-backend | 구현(D2, #17). ready는 PostgreSQL·DynamoDB 확인을 실행하며 배포 환경은 3단계(2026-11-05)부터 200 |
 | 실행 | `GET /api/health/live`, `GET /api/health/ready` | umsal-pwa `services/api` | 구현. ready는 로컬 PostgreSQL `SELECT 1` |
 | 실행 | `GET /api/push/config`, `POST·DELETE /api/push/subscription`, `POST /api/push/test` | umsal-pwa `services/api` | 테스트 채널만 구현(기본 비활성) |
 | 목표 | 사용자 operation 24개(`/me`~`/devices/{id}`, 19 paths) | umsal-backend (D1 확정) | `getMe`·`listConnections`·`getConnection`(#29), `createInvitation`·`acceptInvitation`(#31), `getConsents`·`updateConsents`(#34), `disconnect`(#36), `setConnectionLabel`(#62) 구현, 나머지 미구현 |

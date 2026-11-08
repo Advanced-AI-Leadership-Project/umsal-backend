@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 
 from fastapi import FastAPI
@@ -29,7 +30,17 @@ def create_app(
     token_verifier: TokenVerifier | None | object = _FROM_ENV,
     database: str | DatabaseTarget | None | object = _FROM_ENV,
 ) -> FastAPI:
-    app = FastAPI(title="UMSAL Backend", version=__version__)
+    # Interactive docs and the generated schema only on a developer machine (#66);
+    # deployed environments are public through CloudFront and the contract lives in
+    # contracts/openapi.yaml. app.openapi() still works for the parity tests.
+    local = os.environ.get("UMSAL_ENV", "local") == "local"
+    app = FastAPI(
+        title="UMSAL Backend",
+        version=__version__,
+        docs_url="/docs" if local else None,
+        redoc_url="/redoc" if local else None,
+        openapi_url="/openapi.json" if local else None,
+    )
     # User APIs read this through umsal_backend.auth.require_principal. Without
     # Cognito settings it stays None and protected routes answer 503.
     app.state.token_verifier = (
