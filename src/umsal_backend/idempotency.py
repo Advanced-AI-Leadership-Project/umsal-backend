@@ -48,8 +48,14 @@ def run_idempotent(
     key: str,
     payload: Any,
     handler: Callable[[], tuple[int, Any]],
+    store: Callable[[Any], Any] | None = None,
+    replay: Callable[[int, Any], tuple[int, Any]] | None = None,
 ) -> JSONResponse:
-    """Run ``handler`` at most once per (actor, route, key) and return its response."""
+    """Run ``handler`` at most once per (actor, route, key) and return its response.
+
+    ``store`` may strip values that must not be kept (a presigned URL is a credential);
+    ``replay`` then rebuilds them from the stored body when the same request returns.
+    """
     digest = request_hash(route, payload)
     # Lazy cleanup of this actor's expired keys (and any raw invite codes in them).
     db.execute(
@@ -77,13 +83,16 @@ def run_idempotent(
                 "IDEMPOTENCY_CONFLICT",
                 "The Idempotency-Key was already used for a different request.",
             )
-        return JSONResponse(status_code=status, content=body)
+        if replay is not None:
+            status, body = replay(status, body)
+        return JSONResponse(status_code=status, content=jsonable_encoder(body))
 
     status, body = handler()
     content = jsonable_encoder(body)
+    kept = store(content) if store is not None else content
     db.execute(
         "UPDATE idempotency_keys SET response_status = %s, response_body = %s "
         "WHERE actor_id = %s AND route = %s AND key = %s",
-        (status, Jsonb(content), actor_id, route, key),
+        (status, Jsonb(kept), actor_id, route, key),
     )
     return JSONResponse(status_code=status, content=content)

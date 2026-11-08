@@ -26,6 +26,7 @@ _APP_ENV_VARS = (
     "MIGRATIONS_ROOT",
     "UMSAL_ENV",
     "DYNAMODB_TABLE",
+    "AUDIO_BUCKET",
 )
 
 
