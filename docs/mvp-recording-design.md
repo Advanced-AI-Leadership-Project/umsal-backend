@@ -43,8 +43,8 @@ sequenceDiagram
 
 ## 3. 대역 분석과 교체 자리
 
-- **작업 두 단계 유지(검토 B2):** 쓰기 요청의 트랜잭션1은 작업을 `QUEUED`로 커밋하고 녹음을 `QUEUED_AUDIO`/`QUEUED_TEXT`로 옮긴다(멱등 응답도 이때 저장). 그다음 **응답을 돌려주기 전, 같은 Lambda 호출 안에서**(Lambda는 응답 뒤 작업을 보장하지 않는다) `drain(job_id)`가 트랜잭션2로 claim(`RUNNING`, `PROCESSING_*`, attempt+1) → `Analyzer` 실행 → 내부 `complete()`/`fail()`을 부른다. `complete()`·`fail()`은 2차의 worker API가 그대로 쓸 함수다. 실제 worker로 바꿀 때는 요청 안의 `drain()` 호출을 빼고 worker API(claim·heartbeat·complete·fail)를 붙이며, 상태 전이 코드는 이미 대역으로 실행·시험된 상태다. `drain()`의 오류(`AnalysisError`, S3·DynamoDB 503)는 잡아서 기록하고 작업을 `FAILED`나 재대기로 바꾸며, **이미 커밋한 202를 500으로 바꾸지 않는다**(저장된 멱등 응답과 실제 상태가 어긋나지 않게). 대역 실행 시간은 finalize·assign 응답 시간에 포함된다.
-- **멈춘 작업 복구(lease):** claim은 `lease_expires_at = now() + 2분`을 함께 쓴다. `drain()` 전에 Lambda가 끝나면 작업이 `QUEUED`로, claim 뒤 끝나면 `RUNNING`(lease 만료)으로 남는다. `getJob`·`getRecording`이 30초 넘은 `QUEUED`나 lease가 지난 `RUNNING` 작업을 보면 그 요청에서 다시 claim한다(`UPDATE ... WHERE status = 'QUEUED' OR (status = 'RUNNING' AND lease_expires_at < now())`, 한 번만 성공, attempt+1). attempt가 3을 넘으면 `FAILED`. 읽기 요청은 이 재실행이 실패해도 현재 상태를 그대로 돌려준다. 아무도 조회하지 않을 때를 위해 정리 작업을 15분마다 돌린다(jobs 스택에 일정 추가).
+- **작업 두 단계 유지(검토 B2):** 쓰기 요청의 트랜잭션1은 작업을 `QUEUED`로 커밋하고 녹음을 `QUEUED_AUDIO`/`QUEUED_TEXT`로 옮긴다(멱등 응답도 이때 저장). 그다음 **응답을 돌려주기 전, 같은 Lambda 호출 안에서**(Lambda는 응답 뒤 작업을 보장하지 않는다) `drain(job_id)`가 트랜잭션2로 claim(`RUNNING`, `PROCESSING_*`, attempt+1) → `Analyzer` 실행 → 내부 `complete()`/`fail()`을 부른다. `complete()`·`fail()`은 2차의 worker API가 그대로 쓸 함수다. 실제 worker로 바꿀 때는 요청 안의 `drain()` 호출을 빼고 worker API(claim·heartbeat·complete·fail)를 붙이며, 상태 전이 코드는 이미 대역으로 실행·시험된 상태다. `drain()`의 오류는 잡아서 기록한다. `AnalysisError(retryable=True)`와 S3·DynamoDB 일시 오류는 작업을 `QUEUED`로 되돌리고(attempt는 센 채로), `retryable=False`이거나 attempt가 3을 넘으면 `FAILED`(종료)로 바꾼다. 어느 경우든 **이미 커밋한 202를 500으로 바꾸지 않는다**(저장된 멱등 응답과 실제 상태가 어긋나지 않게). 대역 실행 시간은 finalize·assign 응답 시간에 포함된다.
+- **멈춘 작업 복구(lease):** claim은 `lease_expires_at = now() + 2분`을 함께 쓴다. `drain()` 전에 Lambda가 끝나면 작업이 `QUEUED`로, claim 뒤 끝나면 `RUNNING`(lease 만료)으로 남는다. `getJob`·`getRecording`이 30초 넘은 `QUEUED`나 lease가 지난 `RUNNING` 작업을 보면 그 요청에서 다시 claim한다(`UPDATE ... WHERE status = 'QUEUED' OR (status = 'RUNNING' AND lease_expires_at < now())`, 한 번만 성공). attempt는 claim마다 1씩 늘며 첫 claim이 1이다. attempt가 3을 넘으면(세 번째 재claim 뒤에도 실패) `FAILED`. 읽기 요청은 이 재실행이 실패해도 현재 상태를 그대로 돌려준다. 아무도 조회하지 않을 때를 위해 정리 작업을 15분마다 돌린다(jobs 스택에 일정 추가).
 - `umsal_backend/analysis.py`의 `Analyzer` 프로토콜: `prepare_audio(recording) -> AudioPrepResult`, `analyze_text(recording, assignment) -> TextResult`. 실패는 `AnalysisError(code, retryable)`로 올려 같은 `fail()` 경로를 탄다. 1차는 `StubAnalyzer`만 구현하며 **원음 내용을 읽지 않는다.**
 - 대역 출력: 화자 구간 `spk_1` 0~5,000ms·`spk_2` 5,000~10,000ms(계약 ID 패턴·`start_ms >= 0`·`end_ms >= 1` 만족). TEXT 결과는 고정 예시(`status: OBSERVED`, 인용 없는 요약 1문장, 관찰 1개 `WORRY`, 근거 발화 1개)이며 **항상 `demo: true`**, `limitations`에 "대역 분석 결과예요. 실제 음성을 분석하지 않았고, 파일이 음성인지도 확인하지 않았어요."를 넣는다. 요청의 `demo` 필드는 저장만 하고 동작을 바꾸지 않는다. umsal-pwa #17 완료 조건(GPU·예산 미정 상태를 즉시 분석 가능으로 표시하지 않음)을 지킨다.
 - `UNSURE` 선택: `speaker_assignments` 행을 남기고 version을 올리지만(계약 `expected_version`), TEXT 작업은 만들지 않고 녹음을 `ABSTAINED`로 끝낸다. 이미 `ABSTAINED`인 녹음에 같은 키로 다시 보내면 재전송 응답이다. `getResult`는 200 `status: ABSTAINED`, 빈 `scope`·관찰, `demo: true`, 보류 사유 `limitations`를 준다(409로 영원히 남기지 않는다).
@@ -85,7 +85,7 @@ sequenceDiagram
 | NEEDS_SPEAKER_CONFIRMATION·COMPLETED·ABSTAINED | QUEUED_TEXT | assign CONFIRMED(재지정 시 이전 작업 CANCELLED) |
 | NEEDS_SPEAKER_CONFIRMATION·COMPLETED | ABSTAINED | assign UNSURE |
 | QUEUED_TEXT | PROCESSING_TEXT → COMPLETED | drain(TEXT_ANALYSIS) |
-| PROCESSING_* (작업 RUNNING, lease 만료) | QUEUED_* 상태 유지 후 재claim | 조회·정리 작업의 재실행 |
+| PROCESSING_* (작업 RUNNING, lease 만료) | PROCESSING_* 그대로, 작업을 그 자리에서 재claim(새 lease, attempt+1) | 조회·정리 작업의 재실행 |
 | QUEUED_*·PROCESSING_* | FAILED | `fail()` 또는 attempt 3 초과(1차에서 종료 상태) |
 
 결과 본문은 DynamoDB `pk = REC#<recording_id>`, `sk = RESULT#<assignment_version>`에 둔다. 공개 여부는 PostgreSQL의 동의·삭제·현재 assignment version으로만 정한다(storage.yaml 원칙).
@@ -143,10 +143,10 @@ sequenceDiagram
 | 상황 | 처리 |
 |---|---|
 | HeadObject 404·크기·체크섬 불일치 | 그 version 삭제, 422, 세션은 만료 전까지 다시 업로드 가능 |
-| S3·DynamoDB 일시 오류 | 503 `retryable: true`. drain 중이면 작업 `QUEUED`로 되돌려 다음 조회·정리 때 재시도 |
+| S3·DynamoDB 일시 오류 | 요청 처리 중이면 503 `retryable: true`. drain 중이면 작업 `QUEUED`로 되돌려(attempt 유지) 다음 조회·정리 때 재시도 |
 | DynamoDB 쓰기 뒤 PostgreSQL 커밋 실패 | 보이지 않는 고아 결과, 다음 drain이 같은 키로 덮어쓰거나 삭제가 지움 |
 | drain 전·중 Lambda 종료 | 작업 `QUEUED` 또는 lease 지난 `RUNNING`, 조회·15분 정리가 재claim(attempt 3 초과 시 FAILED) |
-| drain 오류 | 잡아서 작업 FAILED·재대기, 커밋된 202는 그대로 |
+| drain 오류 | 재시도 가능하면 `QUEUED`, 아니면·attempt 3 초과면 `FAILED`. 커밋된 202는 그대로 |
 | 중복 finalize·assign·delete | 멱등 키 재전송 응답, 다른 키는 상태 가드로 409 |
 
 ## 11. 기록과 시험
