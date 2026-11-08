@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   UMSAL backend storage foundation (stack umsal-backend-storage, #52): one DynamoDB table for
-  result bodies and the private audio bucket. Item key design and the upload/job APIs come
-  after the MVP scope decision (D8); nothing here depends on them.
+  result bodies and the private audio bucket. Item keys and the upload/job APIs follow
+  docs/mvp-recording-design.md (D8, #68); browser uploads need the CORS rule below (#70).
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -12,6 +12,14 @@ Metadata:
       - Regional resources in the selected Region (ap-southeast-2) only; no cross-Region replication
       - Synthetic data only until the retention and deletion policy (umsal-pwa 19) is settled
       - Grants and job state stay in PostgreSQL; this table never decides what may be shown
+Parameters:
+  UploadOrigins:
+    Type: CommaDelimitedList
+    Default: 'http://127.0.0.1:5173,http://127.0.0.1:4175'
+    Description: >-
+      Exact browser origins allowed to PUT audio with a presigned URL (#70): the PWA
+      CloudFront address and local development. CORS is not access control; the
+      presigned signature is.
 Resources:
   ResultsTable:
     Type: AWS::DynamoDB::Table
@@ -59,6 +67,16 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
       VersioningConfiguration: {Status: Enabled}
+      CorsConfiguration:
+        CorsRules:
+          # Browser upload with a presigned PUT (docs/mvp-recording-design.md 8). The
+          # signed headers must be allowed; the version id must be readable for finalize.
+          - Id: BrowserPresignedPut
+            AllowedMethods: [PUT]
+            AllowedOrigins: !Ref UploadOrigins
+            AllowedHeaders: [content-type, x-amz-checksum-sha256, x-amz-sdk-checksum-algorithm]
+            ExposedHeaders: [x-amz-version-id, ETag]
+            MaxAge: 600
       LifecycleConfiguration:
         Rules:
           - Id: ShortLivedOldVersions
@@ -88,5 +106,5 @@ Outputs:
   ResultsTableArn:
     Value: !GetAtt ResultsTable.Arn
   AudioBucketName:
-    Description: Private audio bucket (no API access until the upload API, after D8)
+    Description: Private audio bucket (API parameter AudioBucketName, #70)
     Value: !Ref AudioBucket

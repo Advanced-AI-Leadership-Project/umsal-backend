@@ -40,8 +40,16 @@ def run() -> dict[str, int]:
         return purge_expired(connection)
 
 
-def scheduled_handler(_event: Any, _context: Any) -> dict[str, int]:
-    """Lambda entry point for a scheduled rule. Logs only counts, never row contents."""
+def scheduled_handler(event: Any, _context: Any) -> dict[str, int]:
+    """Lambda entry point for a scheduled rule. Logs only counts, never row contents.
+
+    The 15-minute recording sweep (jobs.yaml ``RecordingSweep``, #70) sends
+    ``{"task": "recordings"}``; until the recording sweep exists it does nothing, so the
+    daily purge keeps its own schedule.
+    """
+    if isinstance(event, dict) and event.get("task") == "recordings":
+        print(json.dumps({"recordings": "not_implemented"}))
+        return {}
     counts = run()
     print(json.dumps({"purged": counts}))
     return counts
