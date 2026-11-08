@@ -25,6 +25,7 @@ class FakeAudio:
         self.objects: dict[str, dict[str, tuple[int, str]]] = {}
         self.signed: list[dict] = []
         self.down = False
+        self.cleanup_down = False
 
     def presign_put(self, key, *, content_type, size, sha256_hex, expires_in):
         self.signed.append(
@@ -53,6 +54,8 @@ class FakeAudio:
         self.objects.get(key, {}).pop(version_id, None)
 
     def delete_versions(self, prefix, *, keep=None):
+        if self.cleanup_down:
+            raise StorageUnavailable
         removed = 0
         for key, versions in self.objects.items():
             if key.startswith(prefix):
@@ -550,3 +553,16 @@ def test_an_out_of_range_cursor_is_a_validation_error(client, consented):
         f"/api/recordings?cursor={cursor.decode().rstrip('=')}", headers=_h("bob")
     )
     _assert_error(response, 422, "VALIDATION_FAILED")
+
+
+def test_failed_version_cleanup_does_not_fail_the_finalize(client, consented, audio):
+    ticket = _upload(client, consented).json()
+    key = f"recordings/{ticket['recording_id']}/source"
+    audio.put(key, "v0")
+    audio.put(key, "v1")
+    audio.cleanup_down = True
+    accepted = _finalize(client, ticket["upload_id"])
+    assert accepted.status_code == 202, accepted.text
+    assert set(audio.objects[key]) == {"v0", "v1"}  # left for the deletion and sweep jobs
+    recording = client.get(f"/api/recordings/{ticket['recording_id']}", headers=_h("alice")).json()
+    assert recording["status"] == "NEEDS_SPEAKER_CONFIRMATION"

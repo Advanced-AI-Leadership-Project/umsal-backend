@@ -354,7 +354,7 @@ def finalize_upload(
     upload_id: Annotated[str, Path(pattern=ID_PATTERN)],
 ):
     audio = _audio(request)
-    queued: list[str] = []
+    queued: list[tuple[str, str]] = []
 
     def handler() -> tuple[int, Any]:
         def session(lock: bool) -> tuple:
@@ -394,9 +394,6 @@ def finalize_upload(
                     "SEMANTIC_CHECK_FAILED",
                     "The uploaded file does not match the declaration.",
                 )
-            # Pin this version; other versions (re-uploads within the URL window) go now.
-            # Safe even if the rest fails: the pinned version is never touched.
-            audio.delete_versions(recording_prefix(recording_id), keep=body.version_id)
         except StorageUnavailable as error:
             raise _storage_down() from error
         session(lock=True)
@@ -411,7 +408,7 @@ def finalize_upload(
             raise ApiError(409, "INVALID_STATE", "The recording is not waiting for an upload.")
         db.execute("UPDATE upload_sessions SET finalized_at = now() WHERE id = %s", (upload_id,))
         job_id = analysis.enqueue(db, recording_id, "AUDIO_PREP")
-        queued.append(job_id)
+        queued.append((job_id, recording_id))
         return 202, Accepted(
             request_id=new_request_id(), status="PREPARING_INPUT", resource_id=job_id
         )
@@ -426,8 +423,17 @@ def finalize_upload(
         handler=handler,
     )
     if queued:  # not on a replay: the first request already ran the job
-        db.commit()  # transaction 1: job QUEUED and the idempotent response
-        analysis.drain_safely(db, queued[0], _analyzer(request))
+        job_id, recording_id = queued[0]
+        db.commit()  # transaction 1: version pinned, job QUEUED, idempotent response
+        # Only now, with this version committed as the pinned one, remove the others
+        # (re-uploads within the URL window). Done before commit, a concurrent finalize
+        # with another version could delete the version this one is about to pin.
+        # Best effort: leftovers go with the deletion and sweep jobs.
+        try:
+            audio.delete_versions(recording_prefix(recording_id), keep=body.version_id)
+        except StorageUnavailable:
+            pass
+        analysis.drain_safely(db, job_id, _analyzer(request))
     return response
 
 
