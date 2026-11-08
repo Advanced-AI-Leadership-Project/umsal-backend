@@ -132,8 +132,8 @@ class S3AudioStore:
         except ClientError as error:
             status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             # Without s3:ListBucket a missing key or version answers 403, not 404, so
-            # both mean "no such version" here (#71 review).
-            if status in (400, 403, 404):
+            # both mean "no such version" here (#71 review); a delete marker answers 405.
+            if status in (400, 403, 404, 405):
                 return None
             raise StorageUnavailable from error
         except BotoCoreError as error:

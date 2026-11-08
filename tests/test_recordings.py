@@ -480,3 +480,73 @@ def test_uploads_answer_503_without_storage(migrated_db):
         "/api/uploads", headers=_h("alice", "upload-key-1"), json=_body("con_x")
     )
     _assert_error(response, 503, "TEMPORARILY_UNAVAILABLE")
+
+
+def test_concurrent_uploads_from_both_participants(client, consented, run_concurrently):
+    statuses: list[int] = []
+
+    def upload(sub: str):
+        def run():
+            statuses.append(_upload(client, consented, key=f"race-{sub}-1", sub=sub).status_code)
+
+        return run
+
+    run_concurrently(upload("alice"), upload("bob"))
+    assert statuses == [201, 201]
+
+
+def test_a_stale_attempt_cannot_reset_a_newer_claim(client, consented, audio, migrated_db):
+    class Stop:
+        def prepare_audio(self, recording_id):
+            raise analysis.AnalysisError("STOP", retryable=True)
+
+    recording_id, job_id = _finalized(client, consented, audio, Stop())
+    with psycopg.connect(migrated_db) as connection:
+        first = analysis.claim(connection, job_id)  # attempt 2 (attempt 1 ran in finalize)
+        connection.execute(
+            "UPDATE analysis_jobs SET lease_expires_at = now() - interval '1 second' WHERE id = %s",
+            (job_id,),
+        )
+        connection.commit()
+        second = analysis.claim(connection, job_id)  # attempt 3 takes over
+        connection.commit()
+        analysis.fail(connection, first, analysis.AnalysisError("LATE", retryable=True))
+        connection.commit()
+        analysis.complete_audio(
+            connection, second, analysis.StubAnalyzer().prepare_audio(recording_id)
+        )
+        connection.commit()
+    recording = client.get(f"/api/recordings/{recording_id}", headers=_h("alice")).json()
+    assert recording["status"] == "NEEDS_SPEAKER_CONFIRMATION"
+
+
+def test_a_job_whose_lambda_keeps_dying_fails_after_the_last_attempt(
+    client, consented, audio, migrated_db
+):
+    recording_id, job_id = _finalized(client, consented, audio, FlakyAnalyzer(failures=1))
+    with psycopg.connect(migrated_db, autocommit=True) as connection:
+        connection.execute(
+            "UPDATE analysis_jobs SET status = 'RUNNING', attempt = %s, "
+            "lease_expires_at = now() - interval '1 second' WHERE id = %s",
+            (analysis.MAX_ATTEMPTS, job_id),
+        )
+        connection.execute(
+            "UPDATE recordings SET status = 'PROCESSING_AUDIO' WHERE id = %s", (recording_id,)
+        )
+    job = client.get(f"/api/jobs/{job_id}", headers=_h("alice")).json()
+    assert (job["status"], job["recording_status"], job["failure_code"]) == (
+        "FAILED",
+        "FAILED",
+        "ATTEMPTS_EXHAUSTED",
+    )
+
+
+def test_an_out_of_range_cursor_is_a_validation_error(client, consented):
+    import base64
+    import json
+
+    cursor = base64.urlsafe_b64encode(json.dumps(["0001-01-01T00:00:00+14:00", "rec_x"]).encode())
+    response = client.get(
+        f"/api/recordings?cursor={cursor.decode().rstrip('=')}", headers=_h("bob")
+    )
+    _assert_error(response, 422, "VALIDATION_FAILED")

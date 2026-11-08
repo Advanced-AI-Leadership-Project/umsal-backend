@@ -63,7 +63,7 @@ def test_head_version_reads_size_and_checksum(s3):
     assert store.head_version(KEY, "v1") == storage.ObjectVersion(1234, storage.sha256_b64(SHA))
 
 
-@pytest.mark.parametrize("status", [403, 404])
+@pytest.mark.parametrize("status", [403, 404, 405])
 def test_missing_version_is_none_whether_s3_says_403_or_404(s3, status):
     store, stubber = s3
     stubber.add_client_error("head_object", http_status_code=status)

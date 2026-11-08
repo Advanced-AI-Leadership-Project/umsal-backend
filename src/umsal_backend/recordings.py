@@ -18,6 +18,7 @@ import base64
 import binascii
 import json
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
@@ -242,7 +243,9 @@ def create_upload(
             raise ApiError(413, "PAYLOAD_TOO_LARGE", "The declared file is larger than the limit.")
         user_a, user_b = _require_upload_allowed(db, body.connection_id, user.user_id)
         # Serialize this user's uploads so two concurrent requests cannot both pass the cap.
-        db.execute("SELECT 1 FROM users WHERE id = %s FOR UPDATE", (user.user_id,))
+        # NO KEY UPDATE, not UPDATE: the recordings foreign keys take KEY SHARE on both
+        # participants' rows, and FOR UPDATE would deadlock two participants uploading.
+        db.execute("SELECT 1 FROM users WHERE id = %s FOR NO KEY UPDATE", (user.user_id,))
         open_uploads = db.execute(
             "SELECT count(*) FROM upload_sessions "
             "WHERE owner_id = %s AND finalized_at IS NULL AND expires_at > now()",
@@ -255,13 +258,18 @@ def create_upload(
                 "Finish or wait for earlier uploads first.",
                 retryable=True,
             )
-        recording_id = db.execute(
+        # The id is made here so the S3 key is written once: a placeholder key would
+        # collide on the UNIQUE index between two concurrent uploads.
+        recording_id = f"rec_{uuid.uuid4().hex}"
+        db.execute(
             """
-            INSERT INTO recordings (connection_id, uploader_id, participant_a_id, participant_b_id,
-                occurred_at, filename, content_type, size_bytes, sha256, s3_key, demo)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, '', %s) RETURNING id
+            INSERT INTO recordings (id, connection_id, uploader_id, participant_a_id,
+                participant_b_id, occurred_at, filename, content_type, size_bytes, sha256,
+                s3_key, demo)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
+                recording_id,
                 body.connection_id,
                 user.user_id,
                 user_a,
@@ -271,12 +279,9 @@ def create_upload(
                 body.declared_content_type,
                 body.size_bytes,
                 body.sha256,
+                recording_key(recording_id),
                 bool(body.demo),
             ),
-        ).fetchone()[0]
-        db.execute(
-            "UPDATE recordings SET s3_key = %s WHERE id = %s",
-            (recording_key(recording_id), recording_id),
         )
         upload_id, expires_at = db.execute(
             "INSERT INTO upload_sessions (recording_id, owner_id, expires_at) "
@@ -352,30 +357,32 @@ def finalize_upload(
     queued: list[str] = []
 
     def handler() -> tuple[int, Any]:
-        row = db.execute(
-            """
-            SELECT s.recording_id, s.finalized_at IS NOT NULL, s.expires_at <= now(),
-                   r.connection_id, r.size_bytes, r.sha256, r.s3_key, r.deleted_at IS NOT NULL
-            FROM upload_sessions s JOIN recordings r ON r.id = s.recording_id
-            WHERE s.id = %s AND s.owner_id = %s
-            FOR UPDATE OF s, r
-            """,
-            (upload_id, user.user_id),
-        ).fetchone()
-        if row is None:
-            raise _not_found()
-        recording_id, finalized, expired, connection_id, size, sha256, key, deleted = row
-        if deleted:
-            raise _not_found()
-        if finalized:
-            raise ApiError(409, "INVALID_STATE", "This upload was already finalized.")
-        if expired:
-            raise ApiError(409, "INVALID_STATE", "This upload has expired.")
+        def session(lock: bool) -> tuple:
+            row = db.execute(
+                """
+                SELECT s.recording_id, s.finalized_at IS NOT NULL, s.expires_at <= now(),
+                       r.connection_id, r.size_bytes, r.sha256, r.s3_key, r.deleted_at IS NOT NULL
+                FROM upload_sessions s JOIN recordings r ON r.id = s.recording_id
+                WHERE s.id = %s AND s.owner_id = %s
+                """
+                + (" FOR UPDATE OF s, r" if lock else ""),
+                (upload_id, user.user_id),
+            ).fetchone()
+            if row is None or row[7]:  # missing, another user's, or deleted
+                raise _not_found()
+            if row[1]:
+                raise ApiError(409, "INVALID_STATE", "This upload was already finalized.")
+            if row[2]:
+                raise ApiError(409, "INVALID_STATE", "This upload has expired.")
+            return row
+
+        recording_id, _, _, connection_id, size, sha256, key, _ = session(lock=False)
         if body.size_bytes != size or body.sha256 != sha256:
             raise ApiError(
                 422, "SEMANTIC_CHECK_FAILED", "The file does not match the declared upload."
             )
-        _require_upload_allowed(db, connection_id, user.user_id)
+        # S3 first, without row locks (a slow S3 must not block a disconnect or a
+        # consent change); the state is checked again under the locks below.
         try:
             version = audio.head_version(key, body.version_id)
             if version is None:
@@ -388,9 +395,12 @@ def finalize_upload(
                     "The uploaded file does not match the declaration.",
                 )
             # Pin this version; other versions (re-uploads within the URL window) go now.
+            # Safe even if the rest fails: the pinned version is never touched.
             audio.delete_versions(recording_prefix(recording_id), keep=body.version_id)
         except StorageUnavailable as error:
             raise _storage_down() from error
+        session(lock=True)
+        _require_upload_allowed(db, connection_id, user.user_id)
         updated = db.execute(
             "UPDATE recordings SET s3_version_id = %s, status = 'PREPARING_INPUT', "
             "updated_at = now() "
@@ -502,7 +512,10 @@ def _decode_cursor(cursor: str) -> tuple[datetime, str]:
         or not re.fullmatch(ID_PATTERN, recording_id)
     ):
         raise _invalid_cursor()
-    return parsed.astimezone(UTC), recording_id
+    try:
+        return parsed.astimezone(UTC), recording_id
+    except OverflowError as error:  # e.g. year 1 with a positive offset
+        raise _invalid_cursor() from error
 
 
 @router.get(

@@ -97,7 +97,31 @@ def enqueue(
 
 
 def claim(db: psycopg.Connection, job_id: str) -> Claim | None:
-    """Take a QUEUED job, or a RUNNING one whose lease expired. Succeeds only once."""
+    """Take a QUEUED job, or a RUNNING one whose lease expired. Succeeds only once.
+
+    Lock order everywhere is recording, then job (``complete``/``fail`` lock the
+    recording first too). A RUNNING job whose lease expired after its last allowed
+    attempt (the Lambda died every time) ends FAILED instead of being claimed again.
+    """
+    found = db.execute("SELECT recording_id FROM analysis_jobs WHERE id = %s", (job_id,)).fetchone()
+    if found is None:
+        return None
+    db.execute("SELECT 1 FROM recordings WHERE id = %s FOR UPDATE", (found[0],))
+    exhausted = db.execute(
+        "UPDATE analysis_jobs SET status = 'FAILED', failure_code = 'ATTEMPTS_EXHAUSTED', "
+        "lease_expires_at = NULL, updated_at = now() "
+        "WHERE id = %s AND status = 'RUNNING' AND lease_expires_at < now() AND attempt >= %s "
+        "RETURNING stage",
+        (job_id, MAX_ATTEMPTS),
+    ).fetchone()
+    if exhausted is not None:
+        queued, processing, _ = STAGE_STATUS[exhausted[0]]
+        db.execute(
+            "UPDATE recordings SET status = 'FAILED', failure_code = 'ATTEMPTS_EXHAUSTED', "
+            "updated_at = now() WHERE id = %s AND status IN (%s, %s)",
+            (found[0], queued, processing),
+        )
+        return None
     row = db.execute(
         """
         UPDATE analysis_jobs
@@ -159,12 +183,14 @@ def fail(db: psycopg.Connection, claimed: Claim, error: AnalysisError) -> None:
         _finish_job(db, claimed, "CANCELLED", None)
         return
     if error.retryable and claimed.attempt < MAX_ATTEMPTS:
-        db.execute(
+        requeued = db.execute(
             "UPDATE analysis_jobs SET status = 'QUEUED', lease_expires_at = NULL, "
             "updated_at = now() "
             "WHERE id = %s AND status = 'RUNNING' AND attempt = %s",
             (claimed.job_id, claimed.attempt),
-        )
+        ).rowcount
+        if requeued != 1:
+            return  # a later claim owns the job; this stale attempt must not touch it
         db.execute(
             "UPDATE recordings SET status = %s, updated_at = now() WHERE id = %s AND status = %s",
             (queued, claimed.recording_id, processing),
@@ -204,7 +230,10 @@ def drain_safely(db: psycopg.Connection, job_id: str, analyzer: Analyzer) -> Non
     try:
         drain(db, job_id, analyzer)
     except Exception as error:
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:  # a broken connection: the request's own close handles it
+            pass
         _log("drain_failed", job_id=job_id, error=type(error).__name__)
 
 
