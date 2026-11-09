@@ -1,6 +1,6 @@
 # 백엔드 API AWS 배포 (1·2·3단계)
 
-기준일: 2026-11-08 · 이슈 #19(1단계), #49(2단계 기록), #54(3단계 기록), #62(호칭 배포). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). 3단계에서 DynamoDB 테이블과 원음 S3 버킷(기반만)을 만들어 ready가 200이 됐다([3단계 배포 기록](#3단계-배포-기록)). 2026-11-08부터 PWA CloudFront의 `/api/*`(푸시 `/api/push/*` 제외)가 이 API로 간다([CloudFront 연결](#cloudfront-연결-umsal-pwa-115)). 아래 구조·절차는 1단계 기준이다.
+기준일: 2026-11-09 · 이슈 #19(1단계), #49(2단계 기록), #54(3단계 기록), #62(호칭 배포), #74(녹음 MVP 3단계 배포). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). 3단계에서 DynamoDB 테이블과 원음 S3 버킷(기반만)을 만들어 ready가 200이 됐다([3단계 배포 기록](#3단계-배포-기록)). 2026-11-08부터 PWA CloudFront의 `/api/*`(푸시 `/api/push/*` 제외)가 이 API로 간다([CloudFront 연결](#cloudfront-연결-umsal-pwa-115)). 아래 구조·절차는 1단계 기준이다.
 
 ## 구조
 
@@ -14,8 +14,8 @@ flowchart LR
 | 스택 | 템플릿 | 자원 |
 |---|---|---|
 | `umsal-backend-bootstrap` | [infra/aws/bootstrap.yaml](../infra/aws/bootstrap.yaml) | Lambda zip용 비공개 S3 버킷(암호화·HTTPS 강제·이전 버전 7일 만료, `Retain`) |
-| `umsal-backend-api` | [infra/aws/api.yaml](../infra/aws/api.yaml) | HTTP API, Lambda, 실행 역할(1단계: 자기 로그 쓰기만. 2단계: VPC ENI 관리와 앱 DB 사용자 하나에 대한 `rds-db:connect` 추가. 3단계: 결과 테이블 하나에 대한 `dynamodb:DescribeTable` 추가), 로그 그룹 2개, Errors 경보(알림 구독 없음) |
-| `umsal-backend-storage` (3단계) | [infra/aws/storage.yaml](../infra/aws/storage.yaml) | DynamoDB 결과 테이블, 원음 S3 버킷과 정책(둘 다 `Retain`). 2단계 스택은 [2단계 배포 기록](#2단계-배포-기록) 참고 |
+| `umsal-backend-api` | [infra/aws/api.yaml](../infra/aws/api.yaml) | HTTP API, Lambda, 실행 역할(1단계: 자기 로그 쓰기만. 2단계: VPC ENI 관리와 앱 DB 사용자 하나에 대한 `rds-db:connect` 추가. 3단계: 결과 테이블 하나에 대한 `dynamodb:DescribeTable` 추가. #70: 원음 버킷 `recordings/*` 객체와 결과 테이블 `REC#*` 항목에 대한 `RecordingStorage` 정책 추가), 로그 그룹 2개, Errors 경보(알림 구독 없음) |
+| `umsal-backend-storage` (3단계) | [infra/aws/storage.yaml](../infra/aws/storage.yaml) | DynamoDB 결과 테이블, 원음 S3 버킷과 정책(둘 다 `Retain`), 버킷의 브라우저 PUT용 CORS(#70). 2단계 스택은 [2단계 배포 기록](#2단계-배포-기록) 참고 |
 
 - 프로젝트 계정, 선택 리전 `ap-southeast-2`. umsal-pwa 스택(`umsal-pwa-demo*`, `umsal-demo-storage`)과 그 CloudFront는 건드리지 않는다.
 - 직접 API 주소는 네트워크 제한 없이 열려 있다. 2단계부터 health를 뺀 업무 경로는 Cognito access token이 필요하다(D3). PWA CloudFront `/api/*`도 같은 API로 연결돼 있다(umsal-pwa #115).
@@ -174,6 +174,31 @@ umsal-pwa 이슈 #114, PR #115(병합 `057fd4e`, 2026-11-08)로 PWA CloudFront �
 - 실제 계정 토큰으로 호칭을 저장·조회하는 확인은 PWA 가족 화면(umsal-pwa #120) 배포 뒤 사용자가 한다.
 - `aws cloudformation deploy`에 `--tags Project=umsal-backend`를 빼면 change set이 모든 자원의 `Project` 태그를 지우는 수정으로 잡힌다. 이번에 첫 change set에서 이를 발견해 실행하지 않고 지운 뒤 태그를 넣어 다시 만들었다. 실행 전에 `describe-change-set --include-property-values`로 `Tags` 변경이 없는지 본다.
 
+## 녹음 MVP 3단계 배포 기록 (#74)
+
+2026-11-09에 코드 commit `a97815a97f4681354d09bd945b88d12a389e6087`로 진행했다. 포함한 변경: 녹음 IaC(#70, PR #71), 업로드·조회 API와 마이그레이션 `0006`(#72, PR #73), 배포 환경 `/docs` 비공개(PR #67), DB 조회 값 가리기(PR #61). 설계는 [MVP 녹음·분석 흐름 설계](mvp-recording-design.md). 네 템플릿(`storage`·`api`·`jobs`·`db-inspect`)은 `cfn-lint 1.59.0`과 `validate-template`을 통과했다. 새 API 코드가 `0006` 테이블을 쓰므로 마이그레이션을 API 갱신보다 먼저 했다.
+
+| 순서 | 동작 | 결과 |
+|---|---|---|
+| 1 | `umsal-backend-storage` 갱신, `UploadOrigins=https://d86lxzcp0rvt4.cloudfront.net,http://127.0.0.1:5173,http://127.0.0.1:4175` | change set은 `AudioBucket`의 `CorsConfiguration`만 수정(교체 없음), `UPDATE_COMPLETE`. `get-bucket-cors`로 세 출처 확인 |
+| 2 | zip 빌드·업로드 | `lambda/a97815a….zip`(30,830,505바이트), `-migrate.zip`(35,995,728바이트), `-inspect.zip`(9,640,076바이트, API zip에서 boto3·botocore·s3transfer·cryptography를 뺌) |
+| 3 | `stage2_params.py --with-storage` | `api-params.json`(11개, `AudioBucketName` 추가)·`jobs-params.json`(9개, `AudioBucketName`·`DynamoTableName` 추가) |
+| 4 | `umsal-backend-jobs` 갱신 | change set은 `MaintenanceFunction`(`Code`·`Environment`·`Timeout`)·`MaintenanceRole`(`Policies`)·`MigrationFunction`(`Code`) 수정과 `RecordingSweep` 추가(교체·태그 변경 없음), `UPDATE_COMPLETE`. 이전 코드는 `110b6b4` |
+| 5 | 마이그레이션 Lambda invoke | `{"before": "0005", "after": "0006"}` |
+| 6 | `umsal-backend-api` 갱신 | change set은 `ApiFunction`(`Code`·`Environment`)·`FunctionRole`(`Policies`) 수정만(교체 없음), `UPDATE_COMPLETE`. 이전 코드는 `110b6b4` |
+| 7 | `umsal-backend-db-inspect` 갱신 | change set은 `InspectFunction`의 `Code`만 수정, `UPDATE_COMPLETE`. 이전 코드는 `c1dfda7`(가리기 전) |
+
+| 요청 | 직접 주소 | CloudFront |
+|---|---|---|
+| `GET /api/health/ready` | 200 `ready`, 세 `checks` 모두 `ok`(첫 요청 약 9.3초) | 200 `ready` |
+| `GET /docs`, `GET /openapi.json` | 404 | 403(백엔드 경로가 아니라 PWA 정적 출처로 가며 없는 파일) |
+| `GET /api/me`, `GET /api/recordings`, `POST /api/uploads`, `GET /api/jobs/{id}` (토큰 없음) | 401 | 401 |
+
+- `RecordingSweep`(15분, `{"task": "recordings"}`)은 `ENABLED`이며 첫 실행 로그는 `{"recordings": "not_implemented"}`다. 실제 정리(멈춘 작업 재claim, 만료 업로드, 삭제 재시도)는 설계 12절 5단계에서 구현한다.
+- DB 조회 Lambda 확인: `tables`에 `0006` 테이블(`recordings`·`upload_sessions`·`analysis_jobs`·`speaker_assignments`·`deletion_jobs`)이 보이고 모두 0행. `rows`(`invitations`)에서 `code_hash`·`inviter_label`이 `<redacted>`.
+- 실제 계정 토큰으로 업로드→finalize→조회를 거치는 확인은 PWA 업로드 화면(설계 12절 7단계) 뒤에 한다. 분석은 대역 `AUDIO_PREP`까지이며 텍스트 단계는 4단계 전까지 `STAGE_NOT_AVAILABLE`이다.
+- Git Bash에서 `aws logs`에 `/aws/lambda/...`를 넘기면 경로로 바뀌어 실패한다. `MSYS_NO_PATHCONV=1`을 붙인다.
+
 ## DB 조회 Lambda 기록
 
 이슈 #60. VPC 안 RDS를 운영자가 `aws lambda invoke`로 읽기 전용 조회한다. 코드는 [db_inspect.py](../src/umsal_backend/db_inspect.py), 템플릿은 [db-inspect.yaml](../infra/aws/db-inspect.yaml)(스택 `umsal-backend-db-inspect`, API Gateway 없음, `umsal_app`만 `rds-db:connect`).
@@ -182,9 +207,10 @@ umsal-pwa 이슈 #114, PR #115(병합 `057fd4e`, 2026-11-08)로 PWA CloudFront �
 - 호출 권한: 리소스 정책·API Gateway가 없어 같은 계정에서 `lambda:InvokeFunction` 권한이 있는 IAM 주체만 호출할 수 있다(관리자 포함). 행 내용을 읽을 수 있는 도구이므로 운영자 외에는 이 권한을 주지 않는다. DB 사용자는 앱과 같은 `umsal_app`이고 쓰기 차단은 READ ONLY 트랜잭션에 의존한다(전용 SELECT 전용 역할은 후속).
 - 호출: `aws lambda invoke $P --function-name umsal-backend-db-inspect --cli-binary-format raw-in-base64-out --payload '{"action":"tables"}' out.json`. 응답에는 행 내용이 있으므로 `out.json`은 확인 후 지운다.
 - 2026-11-06 배포: commit `c1dfda7`. 업로드 속도(약 35KB/s) 때문에 API zip에서 Lambda 런타임이 제공하는 boto3·botocore와 DB 경로가 쓰지 않는 cryptography를 뺀 `lambda/<SHA>-inspect.zip`(9MB)을 썼다. change set은 `InspectFunction`·`InspectLog`·`InspectRole` 추가만, `CREATE_COMPLETE`.
-- 확인: `tables` → `alembic_version 1, users 1`, 나머지 0. `rows`(`users`)는 합성 계정 1행. `pg_roles` 요청은 `Unknown table in schema public.`로 거부.
+- 2026-11-09 재배포: commit `a97815a`(값 가리기 포함, [녹음 MVP 3단계 배포 기록](#녹음-mvp-3단계-배포-기록-74)).
+- 첫 배포 확인: `tables` → `alembic_version 1, users 1`, 나머지 0. `rows`(`users`)는 합성 계정 1행. `pg_roles` 요청은 `Unknown table in schema public.`로 거부.
 - 사고 기록: 2026-11-05 23:32~23:35 UTC 콘솔에서 DB 보안 그룹 `sg-0d313953176c1816d`의 Lambda SG 허용 규칙이 삭제되고 공인 IP `/32` 규칙만 남아 API ready가 `database: unavailable`이 됐다(재부팅으로는 해결 안 됨). 2026-11-06 Lambda SG → 5432 규칙을 다시 추가해 ready가 200으로 돌아왔다. DB는 `PubliclyAccessible: false`라 공인 IP 규칙으로는 접속할 수 없다. 남은 공인 IP 규칙은 network 스택 템플릿과 어긋나는 drift이며 삭제 여부는 사용자가 정한다.
 
 ## 다음 단계
 
-- 업로드·작업·결과 API(항목 키 설계, S3 CORS·presigned URL, API의 항목·버킷 권한): MVP 범위(D8) 결정 뒤
+- 화자 확인·결과 조회(`assignSpeaker`·`getResult`, DynamoDB 결과), 삭제·정리 작업: [설계](mvp-recording-design.md) 12절 4·5단계. 코드 변경만이면 zip·api·jobs 갱신, 마이그레이션이 생기면 API보다 먼저 적용한다.

@@ -102,7 +102,7 @@ sequenceDiagram
 
 용어: grant는 방향별(`subject` → `recipient`) 행이다(`consents.py`). "양쪽 분석 동의"는 두 방향 모두 `analysis_allowed`.
 
-- `createUpload`: 요청자가 연결 참여자, 연결 ACTIVE, **양쪽 분석 동의**. 아니면 403. `participants_permission_confirmed`는 스키마상 `const true`(false는 422). 크기 초과 413, 형식 enum 밖 415.
+- `createUpload`: 요청자가 연결 참여자가 아니면 다른 연결 경로와 같이 404. 참여자라도 연결이 ACTIVE가 아니거나 **양쪽 분석 동의**가 없으면 403. `participants_permission_confirmed`는 스키마상 `const true`(false는 422). 크기 초과 413, 형식 enum 밖 415.
 - `finalizeUpload`: 세션 주인만(아니면 404). 만료 409, 이미 finalize된 세션에 같은 키는 재전송 응답·다른 키는 409, sha256·크기 불일치나 version 없음은 422. 현재 연결·동의를 다시 확인(없으면 403).
 - `assignSpeaker`: **업로더만**(계약 설명은 "참여자"이나 화자 확인 자료가 업로더의 로컬 원본이라 1차에서 의도적으로 좁힌다). `target_subject_id`는 연결 참여자, `speaker_id`는 이 녹음 화자 구간의 ID. 그 시점에 **양쪽 분석 동의와 연결 ACTIVE**를 다시 확인하고, `expected_version`이 현재 값과 다르면 409. 버전 증가는 `UPDATE recordings SET speaker_assignment_version = v + 1 WHERE ... AND speaker_assignment_version = expected`.
 - `getResult`:
