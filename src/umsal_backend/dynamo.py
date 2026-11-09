@@ -1,8 +1,8 @@
 """DynamoDB result table settings and the readiness probe (stage 3 foundation, #52).
 
 ``DYNAMODB_TABLE`` names the one table that holds result bodies (SPEC storage layout).
-Item reads and writes arrive with the result APIs after the MVP scope decision (D8);
-until then the API role may only call ``DescribeTable`` on this table.
+Item reads and writes live in ``results.py`` (#75); the API role may touch only
+``REC#*`` items besides ``DescribeTable`` (api.yaml ``RecordingStorage``).
 
 Inside the VPC the call goes through the DynamoDB gateway endpoint. Short timeouts and a
 single attempt keep a broken dependency from holding the readiness request open.

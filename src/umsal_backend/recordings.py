@@ -6,6 +6,8 @@ GET  /api/recordings              listRecordings
 GET  /api/recordings/{id}         getRecording
 GET  /api/jobs/{id}               getJob
 
+Speaker assignment and results are in ``assignments.py`` (stage 4, #75).
+
 Rules (design 6, 7): uploads need an ACTIVE connection and both participants' analysis
 consent, checked again at finalize. A recording is visible to the two participants of
 its connection only, also after a disconnect (status only). Another user's recording,
@@ -32,6 +34,7 @@ from umsal_backend.db import Db
 from umsal_backend.errors import ApiError, new_request_id
 from umsal_backend.idempotency import IdempotencyKey, run_idempotent
 from umsal_backend.identity import CurrentUser
+from umsal_backend.results import ResultStore
 from umsal_backend.storage import (
     UPLOAD_URL_SECONDS,
     AudioStore,
@@ -179,6 +182,11 @@ def _audio(request: Request) -> AudioStore:
 
 def _analyzer(request: Request) -> analysis.Analyzer:
     return getattr(request.app.state, "analyzer", None) or analysis.StubAnalyzer()
+
+
+def _results(request: Request) -> ResultStore | None:
+    # DYNAMODB_TABLE enables result bodies (#75); without it TEXT jobs cannot finish.
+    return getattr(request.app.state, "result_store", None)
 
 
 def _storage_down() -> ApiError:
@@ -491,7 +499,7 @@ def get_recording(
     user: CurrentUser, db: Db, request: Request, recording_id: RecordingId
 ) -> Recording:
     row = _load(db, recording_id, user.user_id)
-    if analysis.redrain_if_stale(db, row[7], _analyzer(request)):
+    if analysis.redrain_if_stale(db, row[7], _analyzer(request), _results(request)):
         row = _load(db, recording_id, user.user_id)
     return _to_recording(row, user.user_id)
 
@@ -574,7 +582,7 @@ def get_job(
     user: CurrentUser, db: Db, request: Request, job_id: Annotated[str, Path(pattern=ID_PATTERN)]
 ) -> Job:
     row = _load_job(db, job_id, user.user_id)
-    if analysis.redrain_if_stale(db, row[0], _analyzer(request)):
+    if analysis.redrain_if_stale(db, row[0], _analyzer(request), _results(request)):
         row = _load_job(db, job_id, user.user_id)
     job_id, recording_id, stage, status, recording_status, attempt, failure = row
     return Job(

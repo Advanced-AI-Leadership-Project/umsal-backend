@@ -81,6 +81,7 @@ def test_implemented_set_is_tracked(app_ops, contract_ops):
     assert sorted(app_ops) == sorted(
         [
             "acceptInvitation",
+            "assignSpeaker",
             "createInvitation",
             "createUpload",
             "disconnect",
@@ -92,6 +93,7 @@ def test_implemented_set_is_tracked(app_ops, contract_ops):
             "getJob",
             "getMe",
             "getRecording",
+            "getResult",
             "listConnections",
             "listRecordings",
             "setConnectionLabel",
