@@ -300,12 +300,18 @@ def get_result(
         ) from error
     if body is None:  # COMPLETED is committed only after the write; treat as not ready
         raise _not_ready("PROCESSING_TEXT")
-    return ResultView(
-        recording_id=recording_id,
-        status=body["status"],
-        target_subject_id=subject,
-        scope=scopes,
-        limitations=list(body["limitations"]),
-        demo=bool(body.get("demo", True)),
-        **_filtered(body, scopes),
-    )
+    try:
+        return ResultView(
+            recording_id=recording_id,
+            status=body["status"],
+            target_subject_id=subject,
+            scope=scopes,
+            limitations=list(body["limitations"]),
+            demo=bool(body.get("demo", True)),
+            **_filtered(body, scopes),
+        )
+    except (KeyError, TypeError, ValueError) as error:  # ValidationError is a ValueError
+        # A malformed item (only this API writes them): no partial or unfiltered body.
+        raise ApiError(
+            503, "TEMPORARILY_UNAVAILABLE", "The stored result could not be read."
+        ) from error

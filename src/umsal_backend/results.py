@@ -77,7 +77,13 @@ class DynamoResultStore:
         ).get("Item")
         if found is None:
             return None
-        return json.loads(found["body"]["S"])
+        try:
+            body = json.loads(found["body"]["S"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise StorageUnavailable from error
+        if not isinstance(body, dict):
+            raise StorageUnavailable
+        return body
 
     def delete(self, recording_id: str, version: int) -> None:
         self._call("delete_item", Key=result_key(recording_id, version))

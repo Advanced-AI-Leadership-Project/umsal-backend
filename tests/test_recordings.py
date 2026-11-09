@@ -933,3 +933,84 @@ def test_without_citations():
 
     text = "그는 「괜찮아」 『정말』 “응” 하고 12:30:05에 utt_9-a 답했다."
     assert without_citations(text) == "그는 하고 에 답했다."
+
+
+def test_unsure_after_a_result_hides_the_old_version(client, consented, audio, results):
+    recording_id, _ = _finalized(client, consented, audio)
+    assert _assign(client, recording_id).status_code == 202
+    unsure = _assign(
+        client, recording_id, speaker=None, decision="UNSURE", version=1, key="assign-unsure"
+    )
+    assert unsure.status_code == 202
+    assert (recording_id, 1) in results.items  # left for deletion; never read again
+    view = _result(client, recording_id, "bob").json()
+    assert (view["status"], view["scope"]) == ("ABSTAINED", [])
+    assert "summary" not in view and "observations" not in view
+
+
+def test_assignment_rechecks_the_connection_and_the_uploaders_consent(client, consented, audio):
+    recording_id, _ = _finalized(client, consented, audio)
+    _consent(client, consented, "alice", allowed=False)  # the uploader, not the target
+    _assert_error(_assign(client, recording_id), 403, "CONSENT_REQUIRED")
+    _consent(client, consented, "alice", allowed=True)
+    client.delete(f"/api/connections/{consented}", headers=_h("bob", "delete-key-1"))
+    _assert_error(_assign(client, recording_id, key="assign-key-2"), 403, "FORBIDDEN")
+
+
+def test_two_concurrent_assignments_create_one_version(
+    client, consented, audio, migrated_db, run_concurrently
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    bob_id = _user_id(client, "bob")
+    statuses: list[int] = []
+
+    def assign(key: str):
+        def run():
+            body = {
+                "expected_version": 0,
+                "target_subject_id": bob_id,
+                "speaker_id": "spk_2",
+                "decision": "CONFIRMED",
+            }
+            response = client.put(
+                f"/api/recordings/{recording_id}/speaker-assignment",
+                headers=_h("alice", key),
+                json=body,
+            )
+            statuses.append(response.status_code)
+
+        return run
+
+    run_concurrently(assign("assign-race-1"), assign("assign-race-2"))
+    assert sorted(statuses) == [202, 409]
+    with psycopg.connect(migrated_db) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM speaker_assignments WHERE recording_id = %s", (recording_id,)
+        ).fetchone() == (1,)
+
+
+def test_a_malformed_stored_result_is_not_shown(client, consented, audio, results):
+    recording_id, _ = _finalized(client, consented, audio)
+    assert _assign(client, recording_id).status_code == 202
+    results.items[(recording_id, 1)] = {"status": "OBSERVED"}  # no limitations, no summary
+    _assert_error(_result(client, recording_id, "bob"), 503, "TEMPORARILY_UNAVAILABLE")
+
+
+def test_dynamo_result_store_rejects_a_malformed_item():
+    from botocore.session import Session
+    from botocore.stub import Stubber
+
+    from umsal_backend.results import DynamoResultStore
+
+    client = Session().create_client(
+        "dynamodb", region_name="ap-southeast-2", aws_access_key_id="x", aws_secret_access_key="y"
+    )
+    store = DynamoResultStore("results-table", "ap-southeast-2", client=client)
+    key = {"pk": {"S": "REC#rec_1"}, "sk": {"S": "RESULT#1"}}
+    params = {"TableName": "results-table", "Key": key, "ConsistentRead": True}
+    with Stubber(client) as stub:
+        stub.add_response("get_item", {"Item": {**key, "body": {"S": "not json"}}}, params)
+        stub.add_response("get_item", {"Item": {**key, "body": {"S": "[1]"}}}, params)
+        for _ in range(2):
+            with pytest.raises(StorageUnavailable):
+                store.get("rec_1", 1)
