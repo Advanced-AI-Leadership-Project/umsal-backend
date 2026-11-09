@@ -29,7 +29,7 @@ PWA 화면은 같은 출처의 `/api/health/{live,ready}`를 호출하고 `servi
 
 ## 3. 결정 필요 항목
 
-D1·D2·D3·D5·D6·D7·D9·D10·D11·D12는 확정됐고, 나머지(D4·D8)는 미확정이다.
+D1·D2·D3·D5·D6·D7·D8·D9·D10·D11·D12는 확정됐고, 나머지(D4)는 미확정이다.
 
 | ID | 항목 | 현재 상태 | 권장안 |
 |---|---|---|---|
@@ -40,7 +40,7 @@ D1·D2·D3·D5·D6·D7·D9·D10·D11·D12는 확정됐고, 나머지(D4·D8)는 
 | D5 | 저장 계층 반영 | 원안은 PostgreSQL 한 DB에서 job·동의·recording을 잠그고 결과·상태·outbox를 한 트랜잭션으로 commit한다(설계 문서 "기계 작업 계약" 8번) | **확정(2026-11-05, 사용자 결정):** 상태와 fencing에 관여하는 `recordings`·`analysis_jobs`·`speaker_assignments`·`deletion_jobs`·`outbox`·`idempotency_keys`는 Aurora에 두어 grant와 같은 트랜잭션으로 검사한다. DynamoDB에는 `utterances`·`observations`·결과 뷰·주간 집계 항목처럼 양이 많고 키로 읽는 자료를 둔다. #7의 "분석 작업 상태는 DynamoDB" 결정을 바꾸며 SPEC "저장 계층"에 반영했다. 이 배치로도 결과 본문(DynamoDB·S3) 쓰기는 Aurora 트랜잭션에 들어가지 않으므로, SPEC의 저장소 간 철회 경합은 그대로 남는다. 결과 쓰기 순서와 노출 조건은 별도로 설계한다 |
 | D6 | S3 버전 고정 | 계약의 `InputRef`·`ArtifactRef`·`Snapshot`이 S3 `version_id`로 입력을 고정한다 | **확정(2026-11-05, 사용자 결정):** 원음 버킷 버전 관리를 켜 계약의 `version_id` 입력 고정을 유지한다. 삭제 시 모든 버전을 명시적으로 지우고, 이전 버전은 수명 주기 규칙으로 짧은 기한 안에 자동 만료한다. SPEC "저장소를 넘나드는 불변조건"에 반영했다 |
 | D7 | 관계 목록 조회 | `GET /me`는 `Actor`만 반환하고 관계 목록 경로가 없다 | 가족 화면을 위해 `GET /connections`(내 관계 목록)를 추가하거나 `/me` 응답에 관계 요약을 넣는다. **확정(2026-11-05, 사용자 결정, #21):** `GET /connections`를 추가한다. `/me`는 `Actor`만 반환한다. 계약 v0.3.0에 `listConnections`·`ConnectionPage`로 반영했다(#25) |
-| D8 | MVP 범위 | 28개 operation 전체가 P0 후보 | 발표 범위(umsal-pwa #17)에 맞춰 1차 구현 operation을 고른다. 결정 전에는 계약에서 operation을 삭제하지 않는다 |
+| D8 | MVP 범위 | 28개 operation 전체가 P0 후보 | **확정(2026-11-08, 사용자 결정, #68):** 1차 범위는 음성 파일 1건 업로드 → 분석(처음엔 대역, 응답 `demo: true`) → 본인 결과 → 동의한 가족 공유 → 삭제. 1차 operation 9개(`createUpload`·`finalizeUpload`·`getJob`·`listRecordings`·`getRecording`·`assignSpeaker`·`getResult`·`deleteRecording`·`getDeletionStatus`), 나머지는 2차. 계약에서 operation은 지우지 않는다. 설계는 [MVP 녹음·분석 흐름 설계](mvp-recording-design.md) |
 | D9 | 작업자의 S3 산출물 쓰기 | 원안은 작업자가 결과 artifact를 S3의 job 전용 출력 prefix에 직접 쓰고, complete에서 참조만 제출한다(설계 문서 "기계 작업 계약" 3·5번). AGENTS의 "작업자는 Aurora·DynamoDB·S3에 직접 쓰지 않고 API를 거친다"(#7, PR #8에서 추가)와 충돌한다 | **확정(2026-11-05, 사용자 결정):** 원안 구조를 유지하고 AGENTS 문구를 좁혔다. 작업자는 Aurora·DynamoDB와 원음 key에는 쓰지 않고, S3에는 claim이 허용한 job 전용 출력 prefix에만 쓴다. 그 산출물은 API가 검증·commit하기 전까지 결과로 취급하지 않는다. 강한 job별 격리가 필요하면 API가 출력용 presigned PUT URL을 발급하는 방식을 검토한다. AGENTS 제품 불변조건에 반영했다 |
 | D10 | 표시 이름 출처 | 계약 `Actor.display_name`은 필수 문자열이지만 값을 설정하는 operation이 없고, Cognito access token에는 이름이 없다 | **확정(2026-11-08, 사용자 결정, #62):** 연결마다 각 참여자가 상대를 부르는 호칭(`Connection.label`, 요청자에게만 보임)을 쓴다. 초대 생성·수락 본문의 선택 `label`과 `PUT /connections/{id}/label`(`setConnectionLabel`)로 정한다. 계약 0.4.0. `Actor.display_name`은 계속 빈 문자열이며 프로필 이름은 필요해지면 별도로 정한다 |
 | D11 | 초대 유효 기간·코드 | 계약은 `expires_at`만 있고 기간·코드 형식이 없다 | **확정(2026-11-05, 사용자 승인, #31):** 유효 24시간, 코드 10자(Crockford base32, 대소문자·하이픈·공백 무시), 수락에는 초대 ID와 코드가 모두 필요. 코드는 SHA-256만 저장한다. 다만 같은 `Idempotency-Key` 재전송에 같은 응답을 주려고 원문 코드가 멱등 기록에 남는다. 기록은 24시간 뒤 만료되어 재전송에 쓰이지 않고 같은 사용자의 다음 요청 때 지워지지만, 이를 막는 정리 작업 `umsal_backend.maintenance`(#36)가 모든 사용자의 만료 기록과 만료된 미수락 초대를 지운다. 이 작업의 주기 실행(EventBridge Scheduler → Lambda)은 2단계 배포에서 연결하며, 그 전에는 수동 실행해야 한다. 수락은 ACTIVE 관계를 만들고 grant 행은 전부 거부 상태로만 만들며 동의로 보지 않는다(FR-02, D12) |
