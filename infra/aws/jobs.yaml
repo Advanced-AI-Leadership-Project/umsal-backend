@@ -42,6 +42,24 @@ Parameters:
     Type: String
     Default: umsal_migrator
     AllowedPattern: '^[a-z_][a-z0-9_]{0,62}$'
+  AudioBucketName:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])?$'
+    Description: MVP recordings (#70). AudioBucketName output of umsal-backend-storage (empty = no sweep)
+  DynamoTableName:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([A-Za-z0-9_.-]{3,255})?$'
+    Description: MVP recordings (#70). ResultsTableName output of umsal-backend-storage
+Conditions:
+  UseRecordings: !Not [!Equals [!Ref AudioBucketName, '']]
+Rules:
+  RecordingsNeedResultsTable:
+    RuleCondition: !Not [!Equals [!Ref AudioBucketName, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref DynamoTableName, '']]
+        AssertDescription: The recording sweep also deletes results; AudioBucketName requires DynamoTableName
 Resources:
   MigrationLog:
     Type: AWS::Logs::LogGroup
@@ -115,6 +133,31 @@ Resources:
               - Effect: Allow
                 Action: rds-db:connect
                 Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbResourceId}/${AppDbUser}'
+        - !If
+          - UseRecordings
+          - PolicyName: RecordingSweep
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                # Expired uploads, deletion retries and the late-PUT re-sweep
+                # (docs/mvp-recording-design.md 9). Delete and list only, no reads.
+                - Sid: DeleteRecordingVersions
+                  Effect: Allow
+                  Action: s3:DeleteObjectVersion
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${AudioBucketName}/recordings/*'
+                - Sid: ListRecordingVersions
+                  Effect: Allow
+                  Action: s3:ListBucketVersions
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${AudioBucketName}'
+                  Condition:
+                    StringLike: {'s3:prefix': 'recordings/*'}
+                - Sid: DeleteRecordingResults
+                  Effect: Allow
+                  Action: [dynamodb:Query, dynamodb:DeleteItem]
+                  Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoTableName}'
+                  Condition:
+                    ForAllValues:StringLike: {'dynamodb:LeadingKeys': ['REC#*']}
+          - !Ref AWS::NoValue
   MigrationFunction:
     Type: AWS::Lambda::Function
     Metadata:
@@ -152,7 +195,8 @@ Resources:
       Architectures: [x86_64]
       Handler: umsal_backend.maintenance.scheduled_handler
       MemorySize: 256
-      Timeout: 60
+      # The 15-minute recording sweep shares this function with the daily purge (#70).
+      Timeout: 180
       ReservedConcurrentExecutions: 1
       Role: !GetAtt MaintenanceRole.Arn
       Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ApiArtifactKey}
@@ -167,6 +211,8 @@ Resources:
           DB_USER: !Ref AppDbUser
           DB_NAME: umsal
           DB_CONNECT_TIMEOUT: '20'
+          AUDIO_BUCKET: !If [UseRecordings, !Ref AudioBucketName, !Ref AWS::NoValue]
+          DYNAMODB_TABLE: !If [UseRecordings, !Ref DynamoTableName, !Ref AWS::NoValue]
       Tags:
         - {Key: Project, Value: umsal-backend}
   SchedulerRole:
@@ -206,6 +252,24 @@ Resources:
         Arn: !GetAtt MaintenanceFunction.Arn
         RoleArn: !GetAtt SchedulerRole.Arn
         RetryPolicy: {MaximumRetryAttempts: 2}
+  RecordingSweep:
+    Type: AWS::Scheduler::Schedule
+    Condition: UseRecordings
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          Stuck analysis jobs (lease), expired uploads, deletion retries and the late-PUT
+          re-sweep must not wait for the daily purge (docs/mvp-recording-design.md 3, 9).
+    Properties:
+      Description: Recording sweep every 15 minutes (jobs, expired uploads, deletions)
+      ScheduleExpression: rate(15 minutes)
+      FlexibleTimeWindow: {Mode: 'OFF'}
+      State: ENABLED
+      Target:
+        Arn: !GetAtt MaintenanceFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: '{"task": "recordings"}'
+        RetryPolicy: {MaximumRetryAttempts: 0}
 Outputs:
   MigrationFunctionName:
     Value: !Ref MigrationFunction

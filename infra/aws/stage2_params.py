@@ -7,7 +7,8 @@ Lambda in the VPC never has to reach the internet. Nothing is created or changed
 Usage (operator machine, logged in with the project profile):
   python infra/aws/stage2_params.py \
       --api-key lambda/<sha>.zip --migrate-key lambda/<sha>-migrate.zip [--with-storage]
-(--with-storage, stage 3: also reads umsal-backend-storage and adds DynamoTableName.)
+(--with-storage, stage 3 and #70: also reads umsal-backend-storage and adds DynamoTableName
+and AudioBucketName to the API and jobs parameters.)
   aws cloudformation deploy ... --parameter-overrides file://.local/stage2/api-params.json
 (--parameter-overrides accepts a JSON list of "Key=Value" strings via file://; verify
 with a change set before executing.)
@@ -99,8 +100,10 @@ def main(argv: list[str] | None = None) -> None:
         "CognitoAppClientIds": auth["WebClientId"],
         "CognitoJwks": jwks,
     }
-    if args.with_storage:
-        api["DynamoTableName"] = stack_outputs("umsal-backend-storage")["ResultsTableName"]
+    storage = stack_outputs("umsal-backend-storage") if args.with_storage else {}
+    if storage:
+        api["DynamoTableName"] = storage["ResultsTableName"]
+        api["AudioBucketName"] = storage["AudioBucketName"]
     jobs = {
         "ArtifactBucket": bucket,
         "ApiArtifactKey": args.api_key,
@@ -110,6 +113,10 @@ def main(argv: list[str] | None = None) -> None:
         "DbHost": database["DbEndpoint"],
         "DbResourceId": database["DbResourceId"],
     }
+    if storage:
+        # MVP recordings (#70): the sweep deletes audio versions and result items.
+        jobs["AudioBucketName"] = storage["AudioBucketName"]
+        jobs["DynamoTableName"] = storage["ResultsTableName"]
     bootstrap = {
         "ArtifactBucket": bucket,
         "ArtifactKey": args.migrate_key,

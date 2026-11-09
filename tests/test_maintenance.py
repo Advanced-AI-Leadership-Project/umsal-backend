@@ -111,3 +111,9 @@ def test_run_and_entry_points_use_database_url(client, migrated_db, monkeypatch,
 def test_run_requires_database_url():
     with pytest.raises(SystemExit):
         maintenance.run()
+
+
+def test_recording_sweep_task_does_not_run_the_purge(monkeypatch, capsys):
+    monkeypatch.setattr(maintenance, "run", lambda: pytest.fail("purge must not run"))
+    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {}
+    assert json.loads(capsys.readouterr().out) == {"recordings": "not_implemented"}

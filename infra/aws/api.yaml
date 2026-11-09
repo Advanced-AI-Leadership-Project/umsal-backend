@@ -78,12 +78,21 @@ Parameters:
     AllowedPattern: '^([A-Za-z0-9_.-]{3,255})?$'
     Description: >-
       Stage 3 (#52). ResultsTableName output of umsal-backend-storage (empty = no table).
-      Grants only dynamodb:DescribeTable on this one table, for the readiness check.
+      Grants dynamodb:DescribeTable on this one table for the readiness check, and result
+      item access only with AudioBucketName (RecordingStorage).
+  AudioBucketName:
+    Type: String
+    Default: ''
+    AllowedPattern: '^([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])?$'
+    Description: >-
+      MVP recordings (#70). AudioBucketName output of umsal-backend-storage (empty = no
+      upload API permissions).
 Conditions:
   UseVpc: !Not [!Equals [!Ref SubnetIds, '']]
   UseDatabase: !Not [!Equals [!Ref DbHost, '']]
   UseCognito: !Not [!Equals [!Ref CognitoUserPoolId, '']]
   UseDynamo: !Not [!Equals [!Ref DynamoTableName, '']]
+  UseAudio: !Not [!Equals [!Ref AudioBucketName, '']]
 Rules:
   # Rules accept only rule functions (Equals, Not, And, Or, Contains, ...), not Join.
   VpcNeedsSecurityGroup:
@@ -105,6 +114,11 @@ Rules:
         AssertDescription: In the VPC the JWKS must be fixed at deploy time
       - Assert: !Not [!Equals [!Ref CognitoAppClientIds, '']]
         AssertDescription: CognitoUserPoolId requires CognitoAppClientIds
+  AudioNeedsResultsTable:
+    RuleCondition: !Not [!Equals [!Ref AudioBucketName, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref DynamoTableName, '']]
+        AssertDescription: Recording results live in the DynamoDB table; AudioBucketName requires DynamoTableName
 Resources:
   FunctionLog:
     Type: AWS::Logs::LogGroup
@@ -170,10 +184,36 @@ Resources:
             PolicyDocument:
               Version: '2012-10-17'
               Statement:
-                # Item reads/writes come with the result APIs (after D8), scoped then.
                 - Effect: Allow
                   Action: dynamodb:DescribeTable
                   Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoTableName}'
+          - !Ref AWS::NoValue
+        - !If
+          - UseAudio
+          - PolicyName: RecordingStorage
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                # docs/mvp-recording-design.md 8 (#70). PutObject only to sign browser
+                # uploads; GetObject(Version) because HeadObject with ChecksumMode needs it
+                # (code never reads a body); version deletes for finalize and deletion.
+                - Sid: RecordingObjects
+                  Effect: Allow
+                  Action: [s3:PutObject, s3:GetObject, s3:GetObjectVersion, s3:DeleteObjectVersion]
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${AudioBucketName}/recordings/*'
+                - Sid: ListRecordingVersions
+                  Effect: Allow
+                  Action: s3:ListBucketVersions
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${AudioBucketName}'
+                  Condition:
+                    StringLike: {'s3:prefix': 'recordings/*'}
+                # Result bodies only (pk REC#...); PostgreSQL decides what may be shown.
+                - Sid: RecordingResults
+                  Effect: Allow
+                  Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:Query]
+                  Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoTableName}'
+                  Condition:
+                    ForAllValues:StringLike: {'dynamodb:LeadingKeys': ['REC#*']}
           - !Ref AWS::NoValue
   ApiFunction:
     Type: AWS::Lambda::Function
@@ -212,6 +252,7 @@ Resources:
           COGNITO_APP_CLIENT_IDS: !If [UseCognito, !Ref CognitoAppClientIds, !Ref AWS::NoValue]
           COGNITO_JWKS: !If [UseCognito, !Ref CognitoJwks, !Ref AWS::NoValue]
           DYNAMODB_TABLE: !If [UseDynamo, !Ref DynamoTableName, !Ref AWS::NoValue]
+          AUDIO_BUCKET: !If [UseAudio, !Ref AudioBucketName, !Ref AWS::NoValue]
       Tags:
         - {Key: Project, Value: umsal-backend}
   HttpApi:
