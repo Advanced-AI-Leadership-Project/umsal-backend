@@ -82,13 +82,18 @@ def test_implemented_set_is_tracked(app_ops, contract_ops):
         [
             "acceptInvitation",
             "createInvitation",
+            "createUpload",
             "disconnect",
+            "finalizeUpload",
             "getConnection",
             "getConsents",
             "getHealthLive",
             "getHealthReady",
+            "getJob",
             "getMe",
+            "getRecording",
             "listConnections",
+            "listRecordings",
             "setConnectionLabel",
             "updateConsents",
         ]

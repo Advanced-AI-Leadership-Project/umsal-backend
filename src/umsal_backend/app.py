@@ -15,12 +15,14 @@ from umsal_backend import (
     identity,
     invitations,
     labels,
+    recordings,
 )
 from umsal_backend.auth import TokenVerifier
 from umsal_backend.db import DatabaseTarget, as_target, database_from_env, postgres_probe
 from umsal_backend.dynamo import dynamodb_probe_from_env
 from umsal_backend.errors import install_error_handlers
 from umsal_backend.health import DependencyName, Probe, create_health_router
+from umsal_backend.storage import AudioStore, audio_store_from_env
 
 _FROM_ENV = object()
 
@@ -29,6 +31,7 @@ def create_app(
     readiness_probes: Mapping[DependencyName, Probe] | None | object = _FROM_ENV,
     token_verifier: TokenVerifier | None | object = _FROM_ENV,
     database: str | DatabaseTarget | None | object = _FROM_ENV,
+    audio_store: AudioStore | None | object = _FROM_ENV,
 ) -> FastAPI:
     # Interactive docs and the generated schema only on a developer machine (#66);
     # deployed environments are public through CloudFront and the contract lives in
@@ -48,6 +51,8 @@ def create_app(
     )
     # User APIs open connections through umsal_backend.db.get_db; None answers 503.
     app.state.database = database_from_env() if database is _FROM_ENV else as_target(database)
+    # Recording uploads (#72): AUDIO_BUCKET enables S3; without it upload routes answer 503.
+    app.state.audio_store = audio_store_from_env() if audio_store is _FROM_ENV else audio_store
     install_error_handlers(app)
 
     @app.get("/health", tags=["ops"])
@@ -75,6 +80,7 @@ def create_app(
     app.include_router(consents.router)
     app.include_router(disconnect.router)
     app.include_router(labels.router)
+    app.include_router(recordings.router)
     return app
 
 
