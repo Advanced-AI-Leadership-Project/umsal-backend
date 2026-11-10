@@ -129,3 +129,33 @@ def test_store_from_env(monkeypatch):
         storage.recording_key("rec_1") == KEY
         and storage.recording_prefix("rec_1") == "recordings/rec_1/"
     )
+
+
+def test_source_prefix_supports_both_persisted_key_formats():
+    assert storage.source_prefix(KEY) == "recordings/rec_1/"
+    key = storage.recording_key("rec_1", "usr_1")
+    assert key == "recordings/users/usr_1/rec_1/source"
+    assert storage.source_prefix(key) == "recordings/users/usr_1/rec_1/"
+
+
+@pytest.mark.parametrize("identifier", ["x", "a" * 129, "../user", "usr/other", "user%2Fother"])
+def test_source_identifiers_cannot_escape_the_recording_namespace(identifier):
+    with pytest.raises(ValueError):
+        storage.recording_key(identifier, "usr_1")
+    with pytest.raises(ValueError):
+        storage.recording_key("rec_1", identifier)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "recordings/rec_1/other",
+        "recordings/../rec_1/source",
+        "recordings/users/usr_1/../rec_1/source",
+        "recordings/users/usr_1/rec_1/source/child",
+        "recordings/users/usr_1/rec_1/source?query=1",
+    ],
+)
+def test_cleanup_rejects_non_source_paths(key):
+    with pytest.raises(ValueError):
+        storage.source_prefix(key)
