@@ -1,0 +1,6 @@
+[
+  {"ParameterKey": "DomainPrefix", "ParameterValue": "umsal-family"},
+  {"ParameterKey": "CallbackUrl", "ParameterValue": "https://d86lxzcp0rvt4.cloudfront.net/auth/callback"},
+  {"ParameterKey": "NativeCallbackUrl", "ParameterValue": "kr.ac.smu.umsal.inputprobe://oauth/callback"},
+  {"ParameterKey": "LogoutUrl", "ParameterValue": "https://d86lxzcp0rvt4.cloudfront.net/"}
+]

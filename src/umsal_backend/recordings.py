@@ -37,8 +37,8 @@ from umsal_backend.storage import (
     AudioStore,
     StorageUnavailable,
     recording_key,
-    recording_prefix,
     sha256_b64,
+    source_prefix,
 )
 
 MAX_BYTES = 52_428_800
@@ -212,10 +212,17 @@ def _require_upload_allowed(
 
 
 def _ticket_fields(
-    audio: AudioStore, recording_id: str, content_type: str, size: int, sha256: str, seconds: int
+    audio: AudioStore,
+    recording_id: str,
+    content_type: str,
+    size: int,
+    sha256: str,
+    seconds: int,
+    *,
+    s3_key: str | None = None,
 ):
     signed = audio.presign_put(
-        recording_key(recording_id),
+        s3_key if s3_key is not None else recording_key(recording_id),
         content_type=content_type,
         size=size,
         sha256_hex=sha256,
@@ -261,6 +268,7 @@ def create_upload(
         # The id is made here so the S3 key is written once: a placeholder key would
         # collide on the UNIQUE index between two concurrent uploads.
         recording_id = f"rec_{uuid.uuid4().hex}"
+        s3_key = recording_key(recording_id, user.user_id)
         db.execute(
             """
             INSERT INTO recordings (id, connection_id, uploader_id, participant_a_id,
@@ -279,7 +287,7 @@ def create_upload(
                 body.declared_content_type,
                 body.size_bytes,
                 body.sha256,
-                recording_key(recording_id),
+                s3_key,
                 bool(body.demo),
             ),
         )
@@ -295,6 +303,7 @@ def create_upload(
             body.size_bytes,
             body.sha256,
             UPLOAD_URL_SECONDS,
+            s3_key=s3_key,
         )
         ticket = UploadTicket(
             upload_id=upload_id,
@@ -316,14 +325,16 @@ def create_upload(
         row = db.execute(
             "SELECT r.content_type, r.size_bytes, r.sha256, s.expires_at, "
             "GREATEST(0, floor(extract(epoch FROM s.expires_at - now())))::int, "
-            "s.finalized_at IS NULL AND r.deleted_at IS NULL "
+            "s.finalized_at IS NULL AND r.deleted_at IS NULL, r.s3_key "
             "FROM upload_sessions s JOIN recordings r ON r.id = s.recording_id WHERE s.id = %s",
             (stored["upload_id"],),
         ).fetchone()
-        content_type, size, sha256, _expires_at, seconds, open_ = row
+        content_type, size, sha256, _expires_at, seconds, open_, s3_key = row
         if not open_ or seconds < 1:
             raise ApiError(409, "INVALID_STATE", "This upload is no longer open.")
-        url, _ = _ticket_fields(audio, stored["recording_id"], content_type, size, sha256, seconds)
+        url, _ = _ticket_fields(
+            audio, stored["recording_id"], content_type, size, sha256, seconds, s3_key=s3_key
+        )
         return status, {**stored, "upload_url": url}
 
     payload = body.model_dump(mode="json", exclude_none=True)
@@ -354,7 +365,7 @@ def finalize_upload(
     upload_id: Annotated[str, Path(pattern=ID_PATTERN)],
 ):
     audio = _audio(request)
-    queued: list[tuple[str, str]] = []
+    queued: list[tuple[str, str, str]] = []
 
     def handler() -> tuple[int, Any]:
         def session(lock: bool) -> tuple:
@@ -408,7 +419,7 @@ def finalize_upload(
             raise ApiError(409, "INVALID_STATE", "The recording is not waiting for an upload.")
         db.execute("UPDATE upload_sessions SET finalized_at = now() WHERE id = %s", (upload_id,))
         job_id = analysis.enqueue(db, recording_id, "AUDIO_PREP")
-        queued.append((job_id, recording_id))
+        queued.append((job_id, recording_id, key))
         return 202, Accepted(
             request_id=new_request_id(), status="PREPARING_INPUT", resource_id=job_id
         )
@@ -423,14 +434,14 @@ def finalize_upload(
         handler=handler,
     )
     if queued:  # not on a replay: the first request already ran the job
-        job_id, recording_id = queued[0]
+        job_id, recording_id, key = queued[0]
         db.commit()  # transaction 1: version pinned, job QUEUED, idempotent response
         # Only now, with this version committed as the pinned one, remove the others
         # (re-uploads within the URL window). Done before commit, a concurrent finalize
         # with another version could delete the version this one is about to pin.
         # Best effort: leftovers go with the deletion and sweep jobs.
         try:
-            audio.delete_versions(recording_prefix(recording_id), keep=body.version_id)
+            audio.delete_versions(source_prefix(key), keep=body.version_id)
         except StorageUnavailable:
             pass
         analysis.drain_safely(db, job_id, _analyzer(request))

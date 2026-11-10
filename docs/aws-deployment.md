@@ -2,6 +2,8 @@
 
 기준일: 2026-11-08 · 이슈 #19(1단계), #49(2단계 기록), #54(3단계 기록), #62(호칭 배포). 1단계는 MVP 구현 전에 배포 경로를 검증하려고 코드를 API Gateway HTTP API + Lambda로 배포했다. 2단계에서 같은 API Lambda를 VPC 안으로 옮겨 RDS PostgreSQL·Cognito에 연결했다([2단계 배포 기록](#2단계-배포-기록)). 3단계에서 DynamoDB 테이블과 원음 S3 버킷(기반만)을 만들어 ready가 200이 됐다([3단계 배포 기록](#3단계-배포-기록)). 2026-11-08부터 PWA CloudFront의 `/api/*`(푸시 `/api/push/*` 제외)가 이 API로 간다([CloudFront 연결](#cloudfront-연결-umsal-pwa-115)). 아래 구조·절차는 1단계 기준이다.
 
+2026-11-10 운영 소스·Cognito 차이와 재배포 시 보존할 파라미터는 [운영 코드·설정 복원 기록](deployed-mobile-restoration.md)에 정리했다. 현재 데모 auth 스택에는 기본값만 사용하지 않고 문서의 `auth-demo.parameters.json`을 명시한다. 복원 PR은 실제 AWS 재배포 기록과 구분한다.
+
 ## 구조
 
 ```mermaid

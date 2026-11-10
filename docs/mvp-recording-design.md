@@ -118,7 +118,7 @@ sequenceDiagram
 
 | 대상 | 변경 |
 |---|---|
-| S3 키 | `recordings/<recording_id>/source`(녹음마다 새 키) |
+| S3 키 | 신규: `recordings/users/<uploader_id>/<recording_id>/source`(#77, 서버 내부 사용자 ID). 기존 `recordings/<recording_id>/source`도 유지하며 재발급·finalize는 DB `s3_key` 사용([복원 기록](deployed-mobile-restoration.md)) |
 | presigned PUT(B5) | 15분, 지역 virtual-host 주소(CORS 사전 요청이 307로 돌지 않게). 서명 헤더와 `required_headers`: `Content-Type`(신고 형식), `Content-Length`(신고 크기), `x-amz-checksum-sha256`(신고 sha256의 base64), `x-amz-sdk-checksum-algorithm: SHA256`. S3가 크기와 내용 체크섬을 강제한다 |
 | finalize 검사 | `HeadObject(Key=정해진 키, VersionId, ChecksumMode=ENABLED)`로 그 키의 version인지, `ContentLength`·`ChecksumSHA256`이 신고값과 같은지 확인. 다르면 그 version을 지우고 422. 고정한 version 외의 version(15분 안 재업로드)은 finalize가 지운다. 본문은 읽지 않는다 |
 | `storage.yaml` | 원음 버킷 CORS: Origin = PWA CloudFront 주소(정확한 값)와 로컬 개발 주소, Method PUT, 허용 헤더 `content-type`·`x-amz-checksum-sha256`·`x-amz-sdk-checksum-algorithm`, 노출 헤더 `x-amz-version-id`·`ETag`, `MaxAgeSeconds`. CORS는 접근 제어가 아니다 |
@@ -130,7 +130,7 @@ sequenceDiagram
 
 ## 9. 정리·삭제
 
-- **방치된 업로드(B4):** 매일 정리 작업이 `expires_at < now()`이고 finalize 안 된 세션의 녹음을 `EXPIRED`로 바꾸고 S3 `recordings/<id>/` 를 지운다. finalize된 녹음의 보관 기간은 미정(umsal-pwa #19)이며 지금은 삭제 요청만이 원음을 지우는 길이다.
+- **방치된 업로드(B4):** 매일 정리 작업이 `expires_at < now()`이고 finalize 안 된 세션의 녹음을 `EXPIRED`로 바꾸고 DB `s3_key`에서 얻은 해당 녹음 prefix의 S3 버전을 지우도록 구현해야 한다(사용자별 상위 경로를 지우지 않음). finalize된 녹음의 보관 기간은 미정(umsal-pwa #19)이며 지금은 삭제 요청만이 원음을 지우는 길이다.
 - **삭제(B3):**
   1. `deleteRecording`: 한 트랜잭션에서 `recordings.deleted_at`·`filename` 지움, 진행 중 작업 `CANCELLED`, `deletion_jobs`(PENDING, `sweep_after = 업로드 세션 만료 + 5분`) 삽입 → 202 `DeletionAccepted`(`deletion_id`, `status_url: /deletions/<id>`, `request_id`는 별개).
   2. 같은 요청에서 커밋 뒤: S3 `ListObjectVersions(prefix)`를 끝까지 넘기며 모든 version과 delete marker를 지우고, DynamoDB `Query(pk = REC#<id>)`의 모든 `RESULT#*`를 지운 뒤, 두 목록이 비었는지 다시 조회한다. 유효한 업로드 URL이 더 없으면(세션이 이미 만료·finalize됨) 바로 `COMPLETED`·`live_deleted_at`, 아직 유효한 URL이 있을 수 있으면 `IN_PROGRESS`로 두고 3단계를 기다린다. 실패하면 `FAILED`·`retryable`·`last_error_code`·`next_attempt_at`, 정리 작업이 재시도(없는 version 삭제는 무해).
