@@ -20,6 +20,8 @@
 인스턴스 프로파일을 만든다. DB 마이그레이션 0007과 0008을 먼저 적용한다. 워커를 기동할 때는
 잠금 파일에서 설치한 Linux 의존성, Python 3.12, 코드와 고정 모델 파일을 포함한
 번들을 비공개 artifact S3 키로 지정한다. `run.py --help`에서 필요한 파라미터를 확인한다.
+WorkerApiEndpoint 출력의 지역별 DNS 주소를 HTTPS URL로 만들어 워커의
+`AWS_ENDPOINT_URL_LAMBDA` 환경 변수에 지정한다.
 EC2에는 공인 IP·인바운드 포트를 할당하지 않고, 프로세스 외부 제한 시간과 종료 시
 인스턴스 종료를 설정한다. IAM을 통해 SQS와 전용 Lambda만 호출하며 원음은 claim이
 발급한 고정 버전 URL로 받는다. DB 직접 연결은 없다.

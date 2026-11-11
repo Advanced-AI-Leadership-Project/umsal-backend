@@ -100,7 +100,7 @@ Resources:
       VpcId: !Ref VpcId
       VpcEndpointType: Interface
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.lambda'
-      PrivateDnsEnabled: true
+      PrivateDnsEnabled: false
       SubnetIds: [!Ref SubnetId]
       SecurityGroupIds: [!Ref EndpointSg]
       PolicyDocument:
@@ -277,6 +277,7 @@ Resources:
 Outputs:
   QueueUrl: {Value: !Ref Queue}
   WorkerApi: {Value: !Ref WorkerApi}
+  WorkerApiEndpoint: {Value: !Ref LambdaEndpoint}
   Publisher: {Value: !Ref Publisher}
   WorkerSecurityGroup: {Value: !Ref WorkerSg}
   InstanceProfile: {Value: !Ref WorkerProfile}
