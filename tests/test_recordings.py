@@ -172,6 +172,7 @@ def _body(connection_id: str, **extra) -> dict:
         "size_bytes": SIZE,
         "sha256": SHA,
         "participants_permission_confirmed": True,
+        "demo": True,
     }
     body.update(extra)
     return body
@@ -1189,3 +1190,73 @@ def test_cpu_revoke_after_claim_has_durable_cancel_and_no_payload(
         )
     assert client.get(f"/api/recordings/{rec}", headers=_h("alice")).json()["status"] == "CANCELLED"
     assert not results.items
+
+
+def test_real_recording_requires_enabled_worker_and_both_consents(
+    client, consented, audio, monkeypatch, migrated_db
+):
+    _assert_error(_upload(client, consented, demo=False), 503, "TEMPORARILY_UNAVAILABLE")
+    monkeypatch.setenv("UMSAL_CPU_REAL_AUDIO_ENABLED", "true")
+    _consent(client, consented, "bob", False)
+    _assert_error(_upload(client, consented, demo=False), 403, "CONSENT_REQUIRED")
+    _consent(client, consented, "bob", True)
+    ticket = _upload(client, consented, demo=False).json()
+    audio.put(_source_key(client, ticket["recording_id"]), "v1")
+    response = _finalize(client, ticket["upload_id"])
+    assert response.status_code == 202
+    with psycopg.connect(migrated_db) as db:
+        assert db.execute(
+            "SELECT j.pipeline_version, r.demo FROM analysis_jobs j "
+            "JOIN recordings r ON r.id=j.recording_id WHERE j.id=%s",
+            (response.json()["resource_id"],),
+        ).fetchone() == ("cpu-2", False)
+
+
+def test_mono_result_uses_confirmed_intervals_and_preserves_real_provenance(
+    client, consented, audio, monkeypatch, migrated_db, results, contract_schema
+):
+    from types import SimpleNamespace
+
+    from umsal_backend.worker_api import operate
+
+    monkeypatch.setenv("UMSAL_CPU_REAL_AUDIO_ENABLED", "true")
+    ticket = _upload(client, consented, demo=False).json()
+    rec = ticket["recording_id"]
+    audio.put(_source_key(client, rec), "v1")
+    audio_job = _finalize(client, ticket["upload_id"]).json()["resource_id"]
+    signing = SimpleNamespace(
+        bucket="synthetic-fixture",
+        client=SimpleNamespace(generate_presigned_url=lambda *args, **kw: "https://audio.test/one"),
+    )
+
+    def worker(job, operation, **fields):
+        with psycopg.connect(migrated_db) as db:
+            return operate(db, {"operation": operation, "job_id": job, **fields}, signing, results)
+
+    assert worker(audio_job, "claim")["pipeline_version"] == "cpu-2"
+    intervals = [
+        {"speaker_id": "spk_1", "start_ms": 100, "end_ms": 2000},
+        {"speaker_id": "spk_2", "start_ms": 3000, "end_ms": 5000},
+    ]
+    assert worker(audio_job, "complete", attempt=1, output=intervals)["state"] == "terminal"
+    text_job = _assign(client, rec, target_sub="alice", speaker="spk_1").json()["resource_id"]
+    claim = worker(text_job, "claim")
+    assert claim["pipeline_version"] == "cpu-2" and claim["speaker_intervals"] == intervals
+    with pytest.raises(ValueError, match="confirmed speaker"):
+        worker(
+            text_job,
+            "complete",
+            attempt=1,
+            output={"category": "WORRY", "text": "synthetic", "start_ms": 1500, "end_ms": 4000},
+        )
+    worker(
+        text_job,
+        "complete",
+        attempt=1,
+        output={"category": "WORRY", "text": "synthetic", "start_ms": 200, "end_ms": 1800},
+    )
+    view = _result(client, rec, "alice").json()
+    contract_schema("ResultView").validate(view)
+    assert view["demo"] is False and view["pipeline_version"] == "cpu-2"
+    _consent(client, consented, "bob", False)
+    _assert_error(_result(client, rec, "alice"), 403, "CONSENT_REQUIRED")

@@ -1,9 +1,15 @@
-# CPU 음성·텍스트 시연
+# CPU 음성·텍스트 분석
 
-운영 중인 S3, PostgreSQL, 결과 DynamoDB를 재사용한다. 테스트 계정 두 명을 API 스택의
-`CpuPilotUsers`에 지정한 뒤 양쪽이 동의한 합성 파일만 `cpu-1` 작업으로 처리한다.
-입력은 두 화자를 각각 한 채널에 넣은 16 kHz, 16비트 PCM 스테레오 WAV, 최대 60초다.
-단일 채널 화자 분리나 일반 통화 정확도는 이 시연의 범위 밖이다.
+운영 중인 S3, PostgreSQL, 결과 DynamoDB를 재사용한다. API 스택의
+`CpuRealAudioEnabled=true`는 양쪽 계정의 현재 분석 동의를 확인한 녹음을
+`cpu-2` 작업으로 접수한다. WAV·MP3·M4A를 지원하며 파일은 최대 50 MiB,
+실제 디코딩한 길이는 최대 10분이다. CPU에서 16 kHz 모노로 변환한 뒤
+화자를 구분한다. 사용자가 로컬 원본을 듣고 자기 목소리를 확인한 뒤에만
+그 화자의 구간을 전사·텍스트 분석한다. 겹쳐 말한 구간은 근거에서 제외한다.
+실제 파일과 합성 파일의 `demo` 출처를 결과까지 보존한다.
+
+기존 `cpu-1`의 지정된 합성 계정·60초 이하 16 kHz 스테레오 WAV 작업과
+결과도 처리한다. 실제 녹음은 기능이 꺼져 있으면 접수를 거절한다.
 
 모델 파일은 Git에 포함하지 않는다. 모델 경로는 아래 리비전의 자산을 사용한다.
 
@@ -12,9 +18,24 @@
 | `whisper/` | [Systran/faster-whisper-base](https://huggingface.co/Systran/faster-whisper-base/tree/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66)의 config.json, tokenizer.json, vocabulary.txt, model.bin |
 | `e5/` | [Xenova/multilingual-e5-small](https://huggingface.co/Xenova/multilingual-e5-small/tree/761b726dd34fb83930e26aab4e9ac3899aa1fa78)의 tokenizer.json 및 onnx/model_quantized.onnx |
 
-`models.py`는 두 채널을 각각 Whisper CPU INT8로 전사해 후보 구간을 만든다. 확인된
-화자의 전사에 E5 임베딩을 적용해 걱정·수면·식사 관련 표현을 점수화한다. 단서의 근거는
-선택한 화자의 실제 전사 구간이며, 점수가 불충분하면 단서 없음으로 표시한다.
+`diarization/segmentation.onnx`는 sherpa-onnx의
+[pyannote segmentation 3.0 변환 자산](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-segmentation-models)이며,
+`diarization/embedding.onnx`는
+[3D-Speaker ERes2Net Base](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)의
+`3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx`다.
+배포 자산의 SHA-256과 모델 라이선스를 번들에 함께 보관한다. sherpa-onnx 2.0.1을 사용한다.
+
+| 파일 | SHA-256 |
+|---|---|
+| segmentation.onnx | 220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079 |
+| embedding.onnx | 1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b |
+
+`models.py`는 음성 활동 분할·화자 임베딩·군집화로 익명 화자 구간을 만든다.
+인물의 신원과 화자 번호는 사용자가 원본을 듣고 확인한다. 텍스트 단계는 오디오
+단계에서 확정한 구간을 Worker API에서 받아 다시 화자를 나누는 과정 없이 사용한다.
+Whisper Base CPU INT8로 해당 구간을 전사하고 E5 임베딩으로 걱정·수면·식사
+관련 단서를 점수화한다. 점수가 불충분하면 단서 없음으로 표시한다.
+전사·화자 분리와 분류에 오류가 있을 수 있으므로 원음 확인과 실제 자료 평가가 필요하다.
 
 `infra/aws/cpu-analysis.yaml`은 발행 Lambda, SQS/DLQ, Worker API, 비공개 엔드포인트,
 인스턴스 프로파일, Launch Template, Auto Scaling 그룹과 용량 제어 Lambda를 만든다.

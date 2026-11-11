@@ -1,4 +1,4 @@
-"""Explicitly enabled synthetic CPU pilot and its durable job publication records."""
+"""CPU recording selection and durable job publication records."""
 
 import os
 
@@ -30,19 +30,34 @@ def selected(demo: bool, participants: tuple[str, str]) -> bool:
     return demo and set(participants) <= eligible
 
 
+def real_audio_enabled() -> bool:
+    return os.getenv("UMSAL_CPU_REAL_AUDIO_ENABLED") == "true"
+
+
+def audio_pipeline(db: psycopg.Connection, recording_id: str) -> str | None:
+    row = db.execute(
+        "SELECT pipeline_version FROM analysis_jobs WHERE recording_id=%s "
+        "AND stage='AUDIO_PREP' AND status='SUCCEEDED'",
+        (recording_id,),
+    ).fetchone()
+    return row[0] if row and row[0] in analysis.CPU_PIPELINES else None
+
+
 def enqueue(
     db: psycopg.Connection,
     recording_id: str,
     stage: str,
     versions: list[int],
     assignment_version: int = 0,
+    *,
+    pipeline_version: str = analysis.CPU_PIPELINE_VERSION,
 ) -> str:
     job_id = analysis.enqueue(
         db,
         recording_id,
         stage,
         assignment_version,
-        pipeline_version=analysis.CPU_PIPELINE_VERSION,
+        pipeline_version=pipeline_version,
     )
     db.execute(
         "INSERT INTO analysis_outbox (job_id, consent_versions) VALUES (%s, %s)",

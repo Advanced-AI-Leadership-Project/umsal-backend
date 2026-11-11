@@ -75,6 +75,10 @@ pyyaml==6.0.3
     #   huggingface-hub
 s3transfer==0.19.3
     # via boto3
+sherpa-onnx==2.0.1
+    # via -r workers/cpu/requirements.in
+sherpa-onnx-core==2.0.1
+    # via sherpa-onnx
 six==1.17.0
     # via python-dateutil
 sympy==1.14.0

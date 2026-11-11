@@ -252,6 +252,8 @@ def create_upload(
         if body.size_bytes > MAX_BYTES:
             raise ApiError(413, "PAYLOAD_TOO_LARGE", "The declared file is larger than the limit.")
         user_a, user_b = _require_upload_allowed(db, body.connection_id, user.user_id)
+        if not body.demo and not pilot.real_audio_enabled():
+            raise ApiError(503, "TEMPORARILY_UNAVAILABLE", "Recording analysis is not enabled.")
         # Serialize this user's uploads so two concurrent requests cannot both pass the cap.
         # NO KEY UPDATE, not UPDATE: the recordings foreign keys take KEY SHARE on both
         # participants' rows, and FOR UPDATE would deadlock two participants uploading.
@@ -415,6 +417,8 @@ def finalize_upload(
         demo = db.execute("SELECT demo FROM recordings WHERE id = %s", (recording_id,)).fetchone()[
             0
         ]
+        if not demo and not pilot.real_audio_enabled():
+            raise ApiError(503, "TEMPORARILY_UNAVAILABLE", "Recording analysis is not enabled.")
         updated = db.execute(
             "UPDATE recordings SET s3_version_id = %s, status = 'PREPARING_INPUT', "
             "updated_at = now() "
@@ -425,10 +429,22 @@ def finalize_upload(
             raise ApiError(409, "INVALID_STATE", "The recording is not waiting for an upload.")
         db.execute("UPDATE upload_sessions SET finalized_at = now() WHERE id = %s", (upload_id,))
         versions = (
-            pilot.grant_versions(db, connection_id) if pilot.selected(demo, participants) else None
+            pilot.grant_versions(db, connection_id)
+            if pilot.real_audio_enabled() or pilot.selected(demo, participants)
+            else None
         )
         job_id = (
-            pilot.enqueue(db, recording_id, "AUDIO_PREP", versions)
+            pilot.enqueue(
+                db,
+                recording_id,
+                "AUDIO_PREP",
+                versions,
+                pipeline_version=(
+                    analysis.RECORDING_PIPELINE_VERSION
+                    if pilot.real_audio_enabled()
+                    else analysis.CPU_PIPELINE_VERSION
+                ),
+            )
             if versions
             else analysis.enqueue(db, recording_id, "AUDIO_PREP")
         )
