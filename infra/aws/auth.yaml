@@ -3,12 +3,12 @@ Description: >-
   UMSAL Cognito user pool for the PWA (stack umsal-backend-auth, deployed 2026-11-05):
   managed login with authorization code + PKCE, a public app client without a secret,
   short-lived access tokens verified by the backend (api-contract D3), and the UMSAL Forest
-  managed login branding (#57).
+  managed login branding (#57), with one opt-in native PKCE callback (#77).
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
   com.aws.cloudformation.Context:
-    ref: [../../docs/aws-stage2-design.md, ../../docs/api-contract.md]
+    ref: [../../docs/aws-stage2-design.md, ../../docs/api-contract.md, ../../docs/deployed-mobile-restoration.md]
     must:
       - Regional resources in the selected Region (ap-southeast-2) only
       - No client secret in a browser app; authorization code flow with PKCE only
@@ -23,10 +23,17 @@ Parameters:
     Type: String
     Default: https://d86lxzcp0rvt4.cloudfront.net/auth/callback
     AllowedPattern: '^https://.+$'
+  NativeCallbackUrl:
+    Type: String
+    Default: ''
+    AllowedValues: ['', 'kr.ac.smu.umsal.inputprobe://oauth/callback']
+    Description: Optional reviewed Android PKCE callback; empty keeps the web-only configuration
   LogoutUrl:
     Type: String
     Default: https://d86lxzcp0rvt4.cloudfront.net/
     AllowedPattern: '^https://.+$'
+Conditions:
+  HasNativeCallback: !Not [!Equals [!Ref NativeCallbackUrl, '']]
 Resources:
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -64,6 +71,12 @@ Resources:
       ManagedLoginVersion: 2
   WebClient:
     Type: AWS::Cognito::UserPoolClient
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Reuse the public PKCE client for the reviewed Android input app without removing the web callback.
+        must:
+          - Keep the HTTPS web callback, code flow, and no client secret
+          - Native callback is opt-in and limited to the reviewed application scheme
     Properties:
       UserPoolId: !Ref UserPool
       ClientName: umsal-pwa
@@ -72,7 +85,10 @@ Resources:
       AllowedOAuthFlows: [code]
       AllowedOAuthScopes: [openid, email]
       SupportedIdentityProviders: [COGNITO]
-      CallbackURLs: [!Ref CallbackUrl]
+      CallbackURLs: !If
+        - HasNativeCallback
+        - [!Ref CallbackUrl, !Ref NativeCallbackUrl]
+        - [!Ref CallbackUrl]
       LogoutURLs: [!Ref LogoutUrl]
       ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
       PreventUserExistenceErrors: ENABLED

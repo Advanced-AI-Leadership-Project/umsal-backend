@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -24,12 +25,29 @@ CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 5
 
 
-def recording_key(recording_id: str) -> str:
+def recording_key(recording_id: str, uploader_id: str | None = None) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{2,127}", recording_id):
+        raise ValueError("Invalid recording identifier")
+    if uploader_id is not None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{2,127}", uploader_id):
+            raise ValueError("Invalid uploader identifier")
+        return f"recordings/users/{uploader_id}/{recording_id}/source"
     return f"recordings/{recording_id}/source"
 
 
 def recording_prefix(recording_id: str) -> str:
     return f"recordings/{recording_id}/"
+
+
+def source_prefix(s3_key: str) -> str:
+    """Use the persisted source key for both legacy and user-scoped recordings."""
+    if not re.fullmatch(
+        r"recordings/(?:users/[A-Za-z0-9][A-Za-z0-9_-]{2,127}/)?"
+        r"[A-Za-z0-9][A-Za-z0-9_-]{2,127}/source",
+        s3_key,
+    ):
+        raise ValueError("Invalid recording source key")
+    return s3_key.removesuffix("source")
 
 
 def sha256_b64(hex_digest: str) -> str:

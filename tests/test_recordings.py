@@ -180,6 +180,11 @@ def _upload(client, connection_id, key="upload-key-1", sub="alice", **extra):
     return client.post("/api/uploads", headers=_h(sub, key), json=_body(connection_id, **extra))
 
 
+def _source_key(client, recording_id: str, sub: str = "alice") -> str:
+    user_id = client.get("/api/me", headers=_h(sub)).json()["user_id"]
+    return f"recordings/users/{user_id}/{recording_id}/source"
+
+
 def _finalize(client, upload_id, version="v1", key="final-key-1", sub="alice", **extra):
     body = {"version_id": version, "sha256": SHA, "size_bytes": SIZE, **extra}
     return client.post(f"/api/uploads/{upload_id}/finalize", headers=_h(sub, key), json=body)
@@ -210,7 +215,7 @@ def test_upload_finalize_and_read_through_the_stub(
         "status": "PROPOSED_LIMITS",
     }
     assert audio.signed[0] == {
-        "key": f"recordings/{t['recording_id']}/source",
+        "key": _source_key(client, t["recording_id"]),
         "type": "audio/mp4",
         "size": SIZE,
         "expires_in": 900,
@@ -226,14 +231,14 @@ def test_upload_finalize_and_read_through_the_stub(
     before = client.get(f"/api/recordings/{t['recording_id']}", headers=_h("alice")).json()
     assert before["status"] == "UPLOADING" and before["job_id"] is None
 
-    audio.put(f"recordings/{t['recording_id']}/source", "v0")  # an earlier re-upload
-    audio.put(f"recordings/{t['recording_id']}/source", "v1")
+    audio.put(_source_key(client, t["recording_id"]), "v0")  # an earlier re-upload
+    audio.put(_source_key(client, t["recording_id"]), "v1")
     accepted = _finalize(client, t["upload_id"])
     assert accepted.status_code == 202, accepted.text
     contract_schema("Accepted").validate(accepted.json())
     assert accepted.json()["status"] == "PREPARING_INPUT"
     job_id = accepted.json()["resource_id"]
-    assert list(audio.objects[f"recordings/{t['recording_id']}/source"]) == [
+    assert list(audio.objects[_source_key(client, t["recording_id"])]) == [
         "v1"
     ]  # only the pinned version
 
@@ -318,14 +323,14 @@ def test_upload_replay_signs_a_fresh_url_until_finalized(client, consented, audi
     assert again.json()["upload_url"] != first["upload_url"]  # re-signed, not stored
     assert 0 < audio.signed[-1]["expires_in"] <= 900
     _assert_error(_upload(client, consented, filename="other.m4a"), 409, "IDEMPOTENCY_CONFLICT")
-    audio.put(f"recordings/{first['recording_id']}/source", "v1")
+    audio.put(_source_key(client, first["recording_id"]), "v1")
     assert _finalize(client, first["upload_id"]).status_code == 202
     _assert_error(_upload(client, consented), 409, "INVALID_STATE")
 
 
 def test_finalize_checks(client, consented, audio, migrated_db):
     ticket = _upload(client, consented).json()
-    key = f"recordings/{ticket['recording_id']}/source"
+    key = _source_key(client, ticket["recording_id"])
     _assert_error(_finalize(client, ticket["upload_id"], sub="bob"), 404, "NOT_FOUND")
     _assert_error(
         _finalize(client, ticket["upload_id"], key="final-key-2", size_bytes=99),
@@ -359,7 +364,7 @@ def test_finalize_checks(client, consented, audio, migrated_db):
 
 def test_finalize_rechecks_consent_and_expiry(client, consented, audio, migrated_db):
     ticket = _upload(client, consented).json()
-    audio.put(f"recordings/{ticket['recording_id']}/source", "v1")
+    audio.put(_source_key(client, ticket["recording_id"]), "v1")
     _consent(client, consented, "bob", allowed=False)
     _assert_error(_finalize(client, ticket["upload_id"]), 403, "CONSENT_REQUIRED")
     _consent(client, consented, "bob", allowed=True)
@@ -372,7 +377,7 @@ def _finalized(client, consented, audio, analyzer=None, n: int = 1) -> tuple[str
     if analyzer is not None:
         client.app.state.analyzer = analyzer
     ticket = _upload(client, consented, key=f"upload-key-{n}").json()
-    audio.put(f"recordings/{ticket['recording_id']}/source", "v1")
+    audio.put(_source_key(client, ticket["recording_id"]), "v1")
     accepted = _finalize(client, ticket["upload_id"], key=f"final-key-{n}")
     return ticket["recording_id"], accepted.json()["resource_id"]
 
@@ -586,7 +591,7 @@ def test_an_out_of_range_cursor_is_a_validation_error(client, consented):
 
 def test_failed_version_cleanup_does_not_fail_the_finalize(client, consented, audio):
     ticket = _upload(client, consented).json()
-    key = f"recordings/{ticket['recording_id']}/source"
+    key = _source_key(client, ticket["recording_id"])
     audio.put(key, "v0")
     audio.put(key, "v1")
     audio.cleanup_down = True
@@ -1014,3 +1019,52 @@ def test_dynamo_result_store_rejects_a_malformed_item():
         for _ in range(2):
             with pytest.raises(StorageUnavailable):
                 store.get("rec_1", 1)
+
+
+def test_upload_keys_use_the_authenticated_internal_user(client, consented, audio):
+    alice = _upload(client, consented).json()
+    bob = _upload(client, consented, sub="bob", key="upload-bob-1").json()
+    alice_key = _source_key(client, alice["recording_id"], "alice")
+    bob_key = _source_key(client, bob["recording_id"], "bob")
+    assert [row["key"] for row in audio.signed] == [alice_key, bob_key]
+    assert alice_key.split("/")[2] != bob_key.split("/")[2]
+    # Cognito subjects and client-provided names never select an S3 namespace.
+    assert "/alice/" not in alice_key and "/bob/" not in bob_key
+    _assert_error(_upload(client, consented, sub="carol"), 404, "NOT_FOUND")
+    assert len(audio.signed) == 2
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_reissued_url_and_finalize_use_the_persisted_source_key(
+    client, consented, audio, migrated_db, legacy
+):
+    ticket = _upload(client, consented).json()
+    key = _source_key(client, ticket["recording_id"])
+    if legacy:
+        # Simulate a still-open upload created by the earlier release. Its key
+        # is immutable history, not a request to move the original object.
+        key = f"recordings/{ticket['recording_id']}/source"
+        with psycopg.connect(migrated_db, autocommit=True) as connection:
+            connection.execute(
+                "UPDATE recordings SET s3_key = %s WHERE id = %s", (key, ticket["recording_id"])
+            )
+    audio.put(key, "v0")
+    audio.put(key, "v1")
+    sibling = key.replace("/source", "_other/source")
+    other_user = key.replace("recordings/", "recordings/users/unrelated/", 1)
+    audio.put(sibling, "v0")
+    audio.put(other_user, "v0")
+
+    replay = _upload(client, consented)
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["upload_id"] == ticket["upload_id"]
+    assert audio.signed[-1]["key"] == key
+    finalized = _finalize(client, ticket["upload_id"])
+    assert finalized.status_code == 202, finalized.text
+    assert set(audio.objects[key]) == {"v1"}
+    assert set(audio.objects[sibling]) == {"v0"}
+    assert set(audio.objects[other_user]) == {"v0"}
+    with psycopg.connect(migrated_db) as connection:
+        assert connection.execute(
+            "SELECT s3_key, s3_version_id FROM recordings WHERE id = %s", (ticket["recording_id"],)
+        ).fetchone() == (key, "v1")
