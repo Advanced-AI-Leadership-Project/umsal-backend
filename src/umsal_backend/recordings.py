@@ -6,6 +6,8 @@ GET  /api/recordings              listRecordings
 GET  /api/recordings/{id}         getRecording
 GET  /api/jobs/{id}               getJob
 
+Speaker assignment and results are in ``assignments.py`` (stage 4, #75).
+
 Rules (design 6, 7): uploads need an ACTIVE connection and both participants' analysis
 consent, checked again at finalize. A recording is visible to the two participants of
 its connection only, also after a disconnect (status only). Another user's recording,
@@ -26,12 +28,13 @@ import psycopg
 from fastapi import APIRouter, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
-from umsal_backend import analysis
+from umsal_backend import analysis, pilot
 from umsal_backend.connections import ID_PATTERN
 from umsal_backend.db import Db
 from umsal_backend.errors import ApiError, new_request_id
 from umsal_backend.idempotency import IdempotencyKey, run_idempotent
 from umsal_backend.identity import CurrentUser
+from umsal_backend.results import ResultStore
 from umsal_backend.storage import (
     UPLOAD_URL_SECONDS,
     AudioStore,
@@ -181,6 +184,11 @@ def _analyzer(request: Request) -> analysis.Analyzer:
     return getattr(request.app.state, "analyzer", None) or analysis.StubAnalyzer()
 
 
+def _results(request: Request) -> ResultStore | None:
+    # DYNAMODB_TABLE enables result bodies (#75); without it TEXT jobs cannot finish.
+    return getattr(request.app.state, "result_store", None)
+
+
 def _storage_down() -> ApiError:
     return ApiError(
         503, "TEMPORARILY_UNAVAILABLE", "Storage is temporarily unavailable.", retryable=True
@@ -201,12 +209,7 @@ def _require_upload_allowed(
     user_a, user_b, status = row
     if status != "ACTIVE":
         raise ApiError(403, "FORBIDDEN", "The connection is not active.")
-    allowed = db.execute(
-        "SELECT count(*) FILTER (WHERE analysis_allowed) FROM consent_grants "
-        "WHERE connection_id = %s",
-        (connection_id,),
-    ).fetchone()[0]
-    if allowed != 2:
+    if pilot.grant_versions(db, connection_id) is None:
         raise ApiError(403, "CONSENT_REQUIRED", "Both participants must allow analysis first.")
     return user_a, user_b
 
@@ -365,7 +368,7 @@ def finalize_upload(
     upload_id: Annotated[str, Path(pattern=ID_PATTERN)],
 ):
     audio = _audio(request)
-    queued: list[tuple[str, str, str]] = []
+    queued: list[tuple[str, str, str, bool]] = []
 
     def handler() -> tuple[int, Any]:
         def session(lock: bool) -> tuple:
@@ -408,7 +411,10 @@ def finalize_upload(
         except StorageUnavailable as error:
             raise _storage_down() from error
         session(lock=True)
-        _require_upload_allowed(db, connection_id, user.user_id)
+        participants = _require_upload_allowed(db, connection_id, user.user_id)
+        demo = db.execute("SELECT demo FROM recordings WHERE id = %s", (recording_id,)).fetchone()[
+            0
+        ]
         updated = db.execute(
             "UPDATE recordings SET s3_version_id = %s, status = 'PREPARING_INPUT', "
             "updated_at = now() "
@@ -418,8 +424,15 @@ def finalize_upload(
         if updated != 1:
             raise ApiError(409, "INVALID_STATE", "The recording is not waiting for an upload.")
         db.execute("UPDATE upload_sessions SET finalized_at = now() WHERE id = %s", (upload_id,))
-        job_id = analysis.enqueue(db, recording_id, "AUDIO_PREP")
-        queued.append((job_id, recording_id, key))
+        versions = (
+            pilot.grant_versions(db, connection_id) if pilot.selected(demo, participants) else None
+        )
+        job_id = (
+            pilot.enqueue(db, recording_id, "AUDIO_PREP", versions)
+            if versions
+            else analysis.enqueue(db, recording_id, "AUDIO_PREP")
+        )
+        queued.append((job_id, recording_id, key, versions is not None))
         return 202, Accepted(
             request_id=new_request_id(), status="PREPARING_INPUT", resource_id=job_id
         )
@@ -434,7 +447,7 @@ def finalize_upload(
         handler=handler,
     )
     if queued:  # not on a replay: the first request already ran the job
-        job_id, recording_id, key = queued[0]
+        job_id, recording_id, key, use_worker = queued[0]
         db.commit()  # transaction 1: version pinned, job QUEUED, idempotent response
         # Only now, with this version committed as the pinned one, remove the others
         # (re-uploads within the URL window). Done before commit, a concurrent finalize
@@ -444,7 +457,8 @@ def finalize_upload(
             audio.delete_versions(source_prefix(key), keep=body.version_id)
         except StorageUnavailable:
             pass
-        analysis.drain_safely(db, job_id, _analyzer(request))
+        if not use_worker:
+            analysis.drain_safely(db, job_id, _analyzer(request))
     return response
 
 
@@ -463,7 +477,7 @@ def _to_recording(row: tuple, viewer: str) -> Recording:
     optional: dict[str, Any] = {}
     if uploader == viewer:
         optional["local_file_sha256"] = sha256  # the uploader matches their local file
-    if intervals is not None:
+    if intervals is not None and uploader == viewer:
         optional["speaker_intervals"] = intervals
     return Recording(
         recording_id=rec_id,
@@ -502,8 +516,11 @@ def get_recording(
     user: CurrentUser, db: Db, request: Request, recording_id: RecordingId
 ) -> Recording:
     row = _load(db, recording_id, user.user_id)
-    if analysis.redrain_if_stale(db, row[7], _analyzer(request)):
+    if analysis.redrain_if_stale(db, row[7], _analyzer(request), _results(request)):
         row = _load(db, recording_id, user.user_id)
+    snapshot = pilot.audio_snapshot(db, recording_id)
+    if snapshot is not None and snapshot != pilot.grant_versions(db, row[1]):
+        row = (*row[:6], None, *row[7:])
     return _to_recording(row, user.user_id)
 
 
@@ -561,7 +578,8 @@ def list_recordings(
     page, extra = rows[:limit], rows[limit:]
     next_cursor = _encode_cursor(page[-1][9], page[-1][0]) if extra else None
     return RecordingPage(
-        items=[_to_recording(row, user.user_id) for row in page], next_cursor=next_cursor
+        items=[_to_recording((*row[:6], None, *row[7:]), user.user_id) for row in page],
+        next_cursor=next_cursor,
     )
 
 
@@ -585,7 +603,7 @@ def get_job(
     user: CurrentUser, db: Db, request: Request, job_id: Annotated[str, Path(pattern=ID_PATTERN)]
 ) -> Job:
     row = _load_job(db, job_id, user.user_id)
-    if analysis.redrain_if_stale(db, row[0], _analyzer(request)):
+    if analysis.redrain_if_stale(db, row[0], _analyzer(request), _results(request)):
         row = _load_job(db, job_id, user.user_id)
     job_id, recording_id, stage, status, recording_status, attempt, failure = row
     return Job(

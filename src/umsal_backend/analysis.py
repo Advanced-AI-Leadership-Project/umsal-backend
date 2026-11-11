@@ -11,6 +11,10 @@ leaves it RUNNING with an expired lease. Reads (``redrain_if_stale``) and the
 ``MAX_ATTEMPTS`` claims a job fails for good.
 
 The stub never reads the audio. Its output is fixed and marked ``demo``.
+
+TEXT_ANALYSIS (stage 4, #75) writes the result body to DynamoDB under the recording's
+row lock, then commits COMPLETED (design 6): a deletion that takes the lock first makes
+the job CANCELLED before anything is written, and one that comes later deletes the item.
 """
 
 from __future__ import annotations
@@ -18,12 +22,15 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 import psycopg
 from psycopg.types.json import Jsonb
 
+from umsal_backend.results import ResultStore
+
 PIPELINE_VERSION = "stub-1"
+CPU_PIPELINE_VERSION = "cpu-1"
 LEASE = timedelta(minutes=2)
 STALE_QUEUED = timedelta(seconds=30)
 MAX_ATTEMPTS = 3
@@ -38,6 +45,9 @@ STUB_INTERVALS = [
     {"speaker_id": "spk_1", "start_ms": 0, "end_ms": 5000},
     {"speaker_id": "spk_2", "start_ms": 5000, "end_ms": 10000},
 ]
+DEMO_LIMITATION = (
+    "대역 분석 결과예요. 실제 음성을 분석하지 않았고, 파일이 음성인지도 확인하지 않았어요."
+)
 
 
 class AnalysisError(Exception):
@@ -54,15 +64,59 @@ class AudioPrepResult:
     speaker_intervals: list[dict]
 
 
+@dataclass(frozen=True)
+class TextResult:
+    """One result artifact. ``getResult`` filters it by scope; it is never shown whole
+    to anyone but the target subject."""
+
+    status: str  # OBSERVED | NOT_OBSERVED
+    summary: str
+    observations: list[dict]  # [{"category": ..., "evidence": [EvidenceView, ...]}]
+    limitations: list[str]
+    demo: bool
+
+    def body(self, pipeline_version: str = PIPELINE_VERSION) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "summary": self.summary,
+            "observations": self.observations,
+            "limitations": self.limitations,
+            "demo": self.demo,
+            "pipeline_version": pipeline_version,
+        }
+
+
 class Analyzer(Protocol):
     def prepare_audio(self, recording_id: str) -> AudioPrepResult: ...
 
+    def analyze_text(self, recording_id: str, speaker_id: str) -> TextResult: ...
+
 
 class StubAnalyzer:
-    """Fixed speaker intervals; never touches the audio (design 3)."""
+    """Fixed speaker intervals and a fixed example result; never touches the audio
+    (design 3). Every result is ``demo`` and says so in ``limitations``."""
 
     def prepare_audio(self, recording_id: str) -> AudioPrepResult:
         return AudioPrepResult(speaker_intervals=[dict(item) for item in STUB_INTERVALS])
+
+    def analyze_text(self, recording_id: str, speaker_id: str) -> TextResult:
+        interval = next(
+            (item for item in STUB_INTERVALS if item["speaker_id"] == speaker_id),
+            STUB_INTERVALS[0],
+        )
+        evidence = {
+            "utterance_id": "utt_1",
+            "start_ms": interval["start_ms"],
+            "end_ms": interval["end_ms"],
+            "text": "(대역 예시) 요즘 일이 많아서 조금 걱정돼.",
+        }
+        return TextResult(
+            status="OBSERVED",
+            summary="대화에서 걱정을 표현한 부분이 한 번 관찰됐어요.",
+            observations=[{"category": "WORRY", "evidence": [evidence]}],
+            limitations=[DEMO_LIMITATION],
+            demo=True,
+        )
 
 
 @dataclass(frozen=True)
@@ -80,14 +134,26 @@ def _log(event: str, **fields: object) -> None:
 
 
 def enqueue(
-    db: psycopg.Connection, recording_id: str, stage: str, assignment_version: int = 0
+    db: psycopg.Connection,
+    recording_id: str,
+    stage: str,
+    assignment_version: int = 0,
+    *,
+    pipeline_version: str = PIPELINE_VERSION,
+    consent_versions: list[int] | None = None,
 ) -> str:
     """Add a QUEUED job and point the recording at it (caller holds the row lock)."""
     queued = STAGE_STATUS[stage][0]
     job_id = db.execute(
-        "INSERT INTO analysis_jobs (recording_id, stage, pipeline_version, assignment_version) "
-        "VALUES (%s, %s, %s, %s) RETURNING id",
-        (recording_id, stage, PIPELINE_VERSION, assignment_version),
+        "INSERT INTO analysis_jobs (recording_id, stage, pipeline_version, assignment_version, "
+        "consent_versions) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (
+            recording_id,
+            stage,
+            pipeline_version,
+            assignment_version,
+            Jsonb(consent_versions) if consent_versions is not None else None,
+        ),
     ).fetchone()[0]
     db.execute(
         "UPDATE recordings SET current_job_id = %s, status = %s, updated_at = now() WHERE id = %s",
@@ -110,9 +176,10 @@ def claim(db: psycopg.Connection, job_id: str) -> Claim | None:
     exhausted = db.execute(
         "UPDATE analysis_jobs SET status = 'FAILED', failure_code = 'ATTEMPTS_EXHAUSTED', "
         "lease_expires_at = NULL, updated_at = now() "
-        "WHERE id = %s AND status = 'RUNNING' AND lease_expires_at < now() AND attempt >= %s "
+        "WHERE id = %s AND pipeline_version = %s AND status = 'RUNNING' "
+        "AND lease_expires_at < now() AND attempt >= %s "
         "RETURNING stage",
-        (job_id, MAX_ATTEMPTS),
+        (job_id, PIPELINE_VERSION, MAX_ATTEMPTS),
     ).fetchone()
     if exhausted is not None:
         queued, processing, _ = STAGE_STATUS[exhausted[0]]
@@ -127,11 +194,11 @@ def claim(db: psycopg.Connection, job_id: str) -> Claim | None:
         UPDATE analysis_jobs
         SET status = 'RUNNING', attempt = attempt + 1, lease_expires_at = now() + %s,
             updated_at = now()
-        WHERE id = %s
+        WHERE id = %s AND pipeline_version = %s
           AND (status = 'QUEUED' OR (status = 'RUNNING' AND lease_expires_at < now()))
         RETURNING recording_id, stage, assignment_version, attempt
         """,
-        (LEASE, job_id),
+        (LEASE, job_id, PIPELINE_VERSION),
     ).fetchone()
     if row is None:
         return None
@@ -177,6 +244,57 @@ def complete_audio(db: psycopg.Connection, claimed: Claim, result: AudioPrepResu
     )
 
 
+def complete_text(
+    db: psycopg.Connection, claimed: Claim, result: TextResult, results: ResultStore
+) -> None:
+    """Fence writes with the current recording, analysis permission and attempt."""
+    from umsal_backend.pilot import grant_versions
+
+    row = db.execute(
+        "SELECT deleted_at IS NULL, speaker_assignment_version, connection_id, current_job_id "
+        "FROM recordings WHERE id = %s FOR UPDATE",
+        (claimed.recording_id,),
+    ).fetchone()
+    if row is None or not row[0] or row[1] != claimed.assignment_version:
+        _finish_job(db, claimed, "CANCELLED", None)
+        return
+    current = grant_versions(db, row[2])
+    snapshot = db.execute(
+        "SELECT consent_versions FROM analysis_jobs WHERE id = %s", (claimed.job_id,)
+    ).fetchone()
+    if (
+        current is None
+        or row[3] != claimed.job_id
+        or snapshot is None
+        or (snapshot[0] is not None and snapshot[0] != current)
+    ):
+        if _finish_job(db, claimed, "CANCELLED", "RECORDING_OR_CONSENT_CHANGED"):
+            db.execute(
+                "UPDATE recordings SET status='CANCELLED', updated_at=now() "
+                "WHERE id=%s AND current_job_id=%s",
+                (claimed.recording_id, claimed.job_id),
+            )
+        return
+    if not _finish_job(db, claimed, "SUCCEEDED", None):
+        return
+    results.put(claimed.recording_id, claimed.assignment_version, result.body())
+    db.execute(
+        "UPDATE recordings SET status = 'COMPLETED', updated_at = now() "
+        "WHERE id = %s AND status = 'PROCESSING_TEXT'",
+        (claimed.recording_id,),
+    )
+
+
+def _speaker_for(db: psycopg.Connection, claimed: Claim) -> str:
+    row = db.execute(
+        "SELECT speaker_id FROM speaker_assignments WHERE recording_id = %s AND version = %s",
+        (claimed.recording_id, claimed.assignment_version),
+    ).fetchone()
+    if row is None or row[0] is None:  # TEXT jobs exist only for CONFIRMED assignments
+        raise AnalysisError("ASSIGNMENT_MISSING", retryable=False)
+    return row[0]
+
+
 def fail(db: psycopg.Connection, claimed: Claim, error: AnalysisError) -> None:
     queued, processing, _ = STAGE_STATUS[claimed.stage]
     if not _locked_live(db, claimed.recording_id):
@@ -204,16 +322,27 @@ def fail(db: psycopg.Connection, claimed: Claim, error: AnalysisError) -> None:
         )
 
 
-def drain(db: psycopg.Connection, job_id: str, analyzer: Analyzer) -> None:
+def drain(
+    db: psycopg.Connection,
+    job_id: str,
+    analyzer: Analyzer,
+    results: ResultStore | None = None,
+) -> None:
     """Claim and run one job in its own transactions (caller committed its work)."""
     claimed = claim(db, job_id)
     db.commit()
     if claimed is None:
         return
     try:
-        if claimed.stage != "AUDIO_PREP":
+        if claimed.stage == "AUDIO_PREP":
+            complete_audio(db, claimed, analyzer.prepare_audio(claimed.recording_id))
+        elif results is None:  # no DYNAMODB_TABLE: nowhere to keep a result
             raise AnalysisError("STAGE_NOT_AVAILABLE", retryable=False)
-        complete_audio(db, claimed, analyzer.prepare_audio(claimed.recording_id))
+        else:
+            speaker_id = _speaker_for(db, claimed)
+            db.commit()  # no lock held while the analyzer runs
+            text = analyzer.analyze_text(claimed.recording_id, speaker_id)
+            complete_text(db, claimed, text, results)
     except AnalysisError as error:
         db.rollback()
         fail(db, claimed, error)
@@ -225,10 +354,15 @@ def drain(db: psycopg.Connection, job_id: str, analyzer: Analyzer) -> None:
     db.commit()
 
 
-def drain_safely(db: psycopg.Connection, job_id: str, analyzer: Analyzer) -> None:
+def drain_safely(
+    db: psycopg.Connection,
+    job_id: str,
+    analyzer: Analyzer,
+    results: ResultStore | None = None,
+) -> None:
     """Run ``drain`` without ever failing the request: the committed response stands."""
     try:
-        drain(db, job_id, analyzer)
+        drain(db, job_id, analyzer, results)
     except Exception as error:
         try:
             db.rollback()
@@ -237,17 +371,23 @@ def drain_safely(db: psycopg.Connection, job_id: str, analyzer: Analyzer) -> Non
         _log("drain_failed", job_id=job_id, error=type(error).__name__)
 
 
-def redrain_if_stale(db: psycopg.Connection, job_id: str | None, analyzer: Analyzer) -> bool:
+def redrain_if_stale(
+    db: psycopg.Connection,
+    job_id: str | None,
+    analyzer: Analyzer,
+    results: ResultStore | None = None,
+) -> bool:
     """On a read: retry a job left QUEUED for 30 s or RUNNING past its lease."""
     if job_id is None:
         return False
     row = db.execute(
         "SELECT (status = 'QUEUED' AND updated_at < now() - %s) "
-        "OR (status = 'RUNNING' AND lease_expires_at < now()) FROM analysis_jobs WHERE id = %s",
-        (STALE_QUEUED, job_id),
+        "OR (status = 'RUNNING' AND lease_expires_at < now()) FROM analysis_jobs "
+        "WHERE id = %s AND pipeline_version = %s",
+        (STALE_QUEUED, job_id, PIPELINE_VERSION),
     ).fetchone()
     if not row or not row[0]:
         return False
     db.commit()
-    drain_safely(db, job_id, analyzer)
+    drain_safely(db, job_id, analyzer, results)
     return True

@@ -1,6 +1,6 @@
 # MVP 녹음·분석 흐름 설계 (D8, #68)
 
-기준일: 2026-11-08 · 상태: 설계(구현 전). 결정 근거는 [API 계약 정합성](api-contract.md) D8, 데이터 설계 원본은 umsal-pwa `docs/design/09_API_계약_및_데이터설계.md`, 요청·응답 형태는 [contracts/openapi.yaml](../contracts/openapi.yaml)이다.
+기준일: 2026-11-09 · 상태: 12절 3단계(#72)·4단계(#75) 구현, 5단계(삭제·정리) 구현 전. 결정 근거는 [API 계약 정합성](api-contract.md) D8, 데이터 설계 원본은 umsal-pwa `docs/design/09_API_계약_및_데이터설계.md`, 요청·응답 형태는 [contracts/openapi.yaml](../contracts/openapi.yaml)이다.
 
 ## 1. 범위 (D8 확정)
 
@@ -109,9 +109,10 @@ sequenceDiagram
   - 결과 주체 = **현재 assignment version의 `target_subject_id`**(업로더가 아님).
   - 대상자 본인: 전체 scope.
   - 다른 참여자: grant(`subject = 대상자`, `recipient = 조회자`)의 `sharing_scopes`만. 비어 있으면 403(목록으로 이미 존재를 아는 참여자라 404로 숨기지 않는다). 대상자의 분석 동의가 꺼졌거나 연결이 ACTIVE가 아니면 대상자 본인 외에는 403.
-  - scope → 필드: `summary` → `summary`, `repetition` → `observations[].category`(근거 없이), `evidence` → `observations[].evidence`. `evidence`가 없으면 근거 배열을 빼고, 요약에 인용을 넣지 않는다(계약). 시험에는 따옴표가 든 대역 요약도 넣어 새지 않는지 확인한다.
-  - 비참여자·삭제된 녹음 404, 결과 전 409 `RESULT_NOT_READY`(계약 S5). 이전 assignment version의 결과는 보여 주지 않는다. 매 조회 때 현재 동의·연결을 다시 거른다.
-- `getRecording`·`listRecordings`: 녹음의 두 참여자. 해제된 연결의 녹음은 두 참여자 모두 상태만 보이고(결과 없음) 삭제할 수 있다.
+  - scope → 필드: `summary` → `summary`, `repetition` → `observations[].category`(근거 없이), `evidence` → `observations[].evidence`. `evidence`가 없으면 근거 배열을 빼고, 요약에 인용을 넣지 않는다(계약). 구현(#75)은 이때 요약에서 따옴표로 묶인 구간(`"`·`'`·`“”`·`‘’`·`「」`·`『』`), 발화 ID(`utt_…`), 시각(`12:30`·`12:30:05`)을 지운다. 시험에는 따옴표가 든 대역 요약도 넣어 새지 않는지 확인한다.
+  - 비참여자·삭제된 녹음 404, 결과 전 409 `RESULT_NOT_READY`(계약 S5). 이전 assignment version의 결과는 보여 주지 않는다. 매 조회 때 현재 동의·연결을 다시 거른다. 구현(#75): 처리 중이면 `retryable: true`, `FAILED`·`CANCELLED`·`EXPIRED`이면 `retryable: false`. `COMPLETED`인데 DynamoDB 항목이 없으면 409(처리 중과 같게), DynamoDB 오류는 503. 오류 순서는 404 → 409(준비 전) → 403(공개 범위).
+  - 결과 저장소(`DYNAMODB_TABLE`)가 없으면 TEXT 작업은 `FAILED`/`STAGE_NOT_AVAILABLE`로 끝난다(재시도해도 같은 결과라서). 대역 결과의 근거 구간은 확인한 화자의 구간(`spk_2`면 5,000~10,000ms)이다.
+- `getRecording`·`listRecordings`: 녹음의 두 참여자. 해제된 연결의 녹음은 두 참여자 모두 상태를 보고 삭제할 수 있다. 결과는 위 `getResult` 규칙을 따르므로 해제 뒤에는 결과 대상자 본인만 자기 결과를 본다(구현 #75: 자기 자료를 본인에게서 막아 보호되는 사람이 없어서. 대상자 본인이 분석 동의를 끈 뒤에도 같다).
 - `deleteRecording`: **녹음의 두 참여자 누구나**, 연결 해제 뒤에도(녹음에 목소리가 담긴 상대도 지울 수 있어야 한다). 대상 지정 전에도 가능. 이미 삭제 요청된 녹음이면 어느 참여자든(다른 멱등 키여도) 기존 `deletion_id`로 202를 준다(404 아님).
 
 ## 8. 저장소·IaC 변경

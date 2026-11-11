@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 import psycopg
 import pytest
@@ -78,14 +79,43 @@ def _principal(request: Request) -> Principal:
     )
 
 
+class FakeResults:
+    """In-memory result table: {(recording_id, version): body}."""
+
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, int], dict] = {}
+        self.down = False
+        self.read_down = False
+
+    def put(self, recording_id, version, body):
+        if self.down:
+            raise StorageUnavailable
+        self.items[(recording_id, version)] = body
+
+    def get(self, recording_id, version):
+        if self.read_down:
+            raise StorageUnavailable
+        return self.items.get((recording_id, version))
+
+    def delete(self, recording_id, version):
+        self.items.pop((recording_id, version), None)
+
+
 @pytest.fixture
 def audio():
     return FakeAudio()
 
 
 @pytest.fixture
-def client(migrated_db, audio):
-    app = create_app(token_verifier=None, database=migrated_db, audio_store=audio)
+def results():
+    return FakeResults()
+
+
+@pytest.fixture
+def client(migrated_db, audio, results):
+    app = create_app(
+        token_verifier=None, database=migrated_db, audio_store=audio, result_store=results
+    )
     app.dependency_overrides[require_principal] = _principal
     return TestClient(app)
 
@@ -573,6 +603,445 @@ def test_failed_version_cleanup_does_not_fail_the_finalize(client, consented, au
     assert recording["status"] == "NEEDS_SPEAKER_CONFIRMATION"
 
 
+# --- MVP stage 4: speaker assignment and results (#75) ---------------------------------
+
+
+def _share(client, connection_id: str, sub: str, scopes, allowed: bool = True) -> None:
+    version = client.get(f"/api/connections/{connection_id}/consents", headers=_h(sub)).json()[
+        "mine"
+    ]["version"]
+    response = client.put(
+        f"/api/connections/{connection_id}/consents",
+        headers=_h(sub, f"share-{sub}-{version}"),
+        json={
+            "expected_version": version,
+            "analysis_allowed": allowed,
+            "sharing_scopes": list(scopes),
+            "verification_preview_allowed_to_other_participant": False,
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+def _user_id(client, sub: str) -> str:
+    return client.get("/api/me", headers=_h(sub)).json()["user_id"]
+
+
+def _assign(
+    client,
+    recording_id,
+    target_sub="bob",
+    speaker="spk_2",
+    decision="CONFIRMED",
+    version=0,
+    key="assign-key-1",
+    sub="alice",
+    **extra,
+):
+    body = {
+        "expected_version": version,
+        "target_subject_id": _user_id(client, target_sub),
+        "speaker_id": speaker,
+        "decision": decision,
+        **extra,
+    }
+    return client.put(
+        f"/api/recordings/{recording_id}/speaker-assignment", headers=_h(sub, key), json=body
+    )
+
+
+def _result(client, recording_id, sub):
+    return client.get(f"/api/recordings/{recording_id}/result", headers=_h(sub))
+
+
+def test_confirm_runs_the_stub_text_stage_and_the_subject_sees_everything(
+    client, consented, audio, results, contract_schema
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    accepted = _assign(client, recording_id)
+    assert accepted.status_code == 202, accepted.text
+    contract_schema("Accepted").validate(accepted.json())
+    assert accepted.json()["status"] == "ACCEPTED"
+    job_id = accepted.json()["resource_id"]
+
+    job = client.get(f"/api/jobs/{job_id}", headers=_h("alice")).json()
+    assert (job["stage"], job["status"], job["recording_status"]) == (
+        "TEXT_ANALYSIS",
+        "SUCCEEDED",
+        "COMPLETED",
+    )
+    recording = client.get(f"/api/recordings/{recording_id}", headers=_h("alice")).json()
+    assert (recording["speaker_assignment_version"], recording["job_id"]) == (1, job_id)
+    stored = results.items[(recording_id, 1)]
+    assert stored["demo"] is True and stored["pipeline_version"] == "stub-1"
+
+    mine = _result(client, recording_id, "bob")
+    assert mine.status_code == 200, mine.text
+    view = mine.json()
+    contract_schema("ResultView").validate(view)
+    assert view["target_subject_id"] == _user_id(client, "bob")
+    assert view["scope"] == ["summary", "repetition", "evidence"]
+    assert view["status"] == "OBSERVED" and view["demo"] is True
+    assert view["limitations"] == [analysis.DEMO_LIMITATION]
+    evidence = view["observations"][0]["evidence"][0]
+    assert (evidence["start_ms"], evidence["end_ms"]) == (5000, 10000)  # spk_2's interval
+
+    # alice's view follows bob's grant to her: ["summary"] from _consent.
+    shared = _result(client, recording_id, "alice").json()
+    contract_schema("ResultView").validate(shared)
+    assert shared["scope"] == ["summary"]
+    assert "observations" not in shared and shared["summary"] == view["summary"]
+    _assert_error(_result(client, recording_id, "carol"), 404, "NOT_FOUND")
+
+
+def test_scopes_filter_fields_and_strip_citations_without_evidence(
+    client, consented, audio, results
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    assert _assign(client, recording_id).status_code == 202
+    quoted = {
+        **results.items[(recording_id, 1)],
+        "summary": '어제 "잠을 못 잤어"라고 utt_1 00:05에 말했어요. ‘힘들다’고도 했어요.',
+    }
+    results.items[(recording_id, 1)] = quoted
+
+    _share(client, consented, "bob", ["summary", "repetition"])
+    view = _result(client, recording_id, "alice").json()
+    assert view["scope"] == ["summary", "repetition"]
+    assert view["observations"] == [{"category": "WORRY"}]  # categories, no evidence
+    for leaked in ("잠을 못 잤어", "utt_1", "00:05", "힘들다", '"', "‘"):
+        assert leaked not in view["summary"]
+
+    _share(client, consented, "bob", ["evidence"])
+    view = _result(client, recording_id, "alice").json()
+    assert view["scope"] == ["evidence"]
+    assert "summary" not in view
+    assert view["observations"][0]["evidence"][0]["utterance_id"] == "utt_1"
+
+    _share(client, consented, "bob", ["summary", "evidence"])
+    assert _result(client, recording_id, "alice").json()["summary"] == quoted["summary"]
+
+
+def test_result_access_follows_current_consent_and_connection(client, consented, audio):
+    recording_id, _ = _finalized(client, consented, audio)
+    assert _assign(client, recording_id).status_code == 202
+    _share(client, consented, "bob", [])
+    _assert_error(_result(client, recording_id, "alice"), 403, "FORBIDDEN")
+    _share(client, consented, "bob", ["summary"], allowed=False)
+    _assert_error(_result(client, recording_id, "alice"), 403, "CONSENT_REQUIRED")
+    assert _result(client, recording_id, "bob").status_code == 200  # the subject always
+    _share(client, consented, "bob", ["summary"])
+    assert _result(client, recording_id, "alice").status_code == 200
+    client.delete(f"/api/connections/{consented}", headers=_h("bob", "delete-key-1"))
+    _assert_error(_result(client, recording_id, "alice"), 403, "FORBIDDEN")
+    assert _result(client, recording_id, "bob").status_code == 200
+
+
+def test_assignment_checks(client, consented, audio, migrated_db):
+    recording_id, _ = _finalized(client, consented, audio)
+    _assert_error(_assign(client, recording_id, sub="bob"), 403, "FORBIDDEN")
+    _assert_error(_assign(client, recording_id, sub="carol"), 404, "NOT_FOUND")
+    _assert_error(_assign(client, recording_id, version=3), 409, "VERSION_CONFLICT")
+    _assert_error(_assign(client, recording_id, target_sub="carol"), 422, "SEMANTIC_CHECK_FAILED")
+    _assert_error(_assign(client, recording_id, speaker="spk_9"), 422, "SEMANTIC_CHECK_FAILED")
+    for bad in (
+        {"decision": "UNSURE"},  # speaker_id must be null
+        {"speaker": None},  # CONFIRMED needs a speaker
+        {"version": "0"},
+        {"unexpected": 1},
+    ):
+        _assert_error(_assign(client, recording_id, **bad), 422, "VALIDATION_FAILED")
+    _consent(client, consented, "bob", allowed=False)
+    _assert_error(_assign(client, recording_id), 403, "CONSENT_REQUIRED")
+    _consent(client, consented, "bob", allowed=True)
+
+    first = _assign(client, recording_id, key="assign-key-ok")
+    assert first.status_code == 202
+    assert _assign(client, recording_id, key="assign-key-ok").json() == first.json()  # replay
+    _assert_error(
+        _assign(client, recording_id, key="assign-key-new"), 409, "VERSION_CONFLICT"
+    )  # version 0 is gone
+    with psycopg.connect(migrated_db) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM analysis_jobs WHERE stage = 'TEXT_ANALYSIS'"
+        ).fetchone() == (1,)
+
+
+def test_assignment_and_result_wait_for_the_audio_stage(client, consented, audio):
+    recording_id, _ = _finalized(client, consented, audio, FlakyAnalyzer(failures=1))
+    _assert_error(_assign(client, recording_id), 409, "INVALID_STATE")
+    response = _result(client, recording_id, "alice")
+    _assert_error(response, 409, "RESULT_NOT_READY")
+    assert response.json()["retryable"] is True
+
+
+def test_unsure_abstains_and_a_later_confirmation_replaces_it(
+    client, consented, audio, results, contract_schema
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    unsure = _assign(client, recording_id, speaker=None, decision="UNSURE")
+    assert unsure.status_code == 202 and unsure.json()["resource_id"] == recording_id
+    recording = client.get(f"/api/recordings/{recording_id}", headers=_h("alice")).json()
+    assert (recording["status"], recording["speaker_assignment_version"]) == ("ABSTAINED", 1)
+    view = _result(client, recording_id, "bob").json()
+    contract_schema("ResultView").validate(view)
+    assert (view["status"], view["scope"], view["demo"]) == ("ABSTAINED", [], True)
+    _assert_error(
+        _assign(client, recording_id, speaker=None, decision="UNSURE", version=1, key="assign-k-2"),
+        409,
+        "INVALID_STATE",
+    )
+
+    # Confirm alice instead; then re-confirm bob: only the current version is shown.
+    assert (
+        _assign(client, recording_id, "alice", "spk_1", version=1, key="assign-k-3").status_code
+        == 202
+    )
+    assert _result(client, recording_id, "alice").json()["target_subject_id"] == _user_id(
+        client, "alice"
+    )
+    assert (
+        _assign(client, recording_id, "bob", "spk_2", version=2, key="assign-k-4").status_code
+        == 202
+    )
+    assert set(results.items) == {(recording_id, 2), (recording_id, 3)}
+    view = _result(client, recording_id, "bob").json()
+    assert view["target_subject_id"] == _user_id(client, "bob")
+    assert view["observations"][0]["evidence"][0]["start_ms"] == 5000
+
+
+def test_text_stage_without_a_result_store_fails_for_good(migrated_db, audio):
+    app = create_app(
+        token_verifier=None, database=migrated_db, audio_store=audio, result_store=None
+    )
+    app.dependency_overrides[require_principal] = _principal
+    client = TestClient(app)
+    ticket = client.post("/api/invitations", headers=_h("alice", "invite-key-1"), json={}).json()
+    connection_id = client.post(
+        f"/api/invitations/{ticket['invitation_id']}/accept",
+        headers=_h("bob", "accept-key-1"),
+        json={"invite_code": ticket["invite_code"]},
+    ).json()["connection_id"]
+    _consent(client, connection_id, "alice")
+    _consent(client, connection_id, "bob")
+    recording_id, _ = _finalized(client, connection_id, audio)
+    job_id = _assign(client, recording_id).json()["resource_id"]
+    job = client.get(f"/api/jobs/{job_id}", headers=_h("alice")).json()
+    assert (job["status"], job["failure_code"]) == ("FAILED", "STAGE_NOT_AVAILABLE")
+    response = _result(client, recording_id, "bob")
+    _assert_error(response, 409, "RESULT_NOT_READY")
+    assert response.json()["retryable"] is False
+
+
+def test_a_result_store_outage_requeues_and_a_stale_read_finishes(
+    client, consented, audio, results, migrated_db
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    results.down = True
+    job_id = _assign(client, recording_id).json()["resource_id"]
+    job = client.get(f"/api/jobs/{job_id}", headers=_h("alice")).json()
+    assert (job["status"], job["recording_status"]) == ("QUEUED", "QUEUED_TEXT")
+    results.down = False
+    _age_job(migrated_db, job_id)
+    assert _result(client, recording_id, "bob").status_code == 200  # the read re-drains
+
+    results.read_down = True
+    _assert_error(_result(client, recording_id, "bob"), 503, "TEMPORARILY_UNAVAILABLE")
+
+
+def test_a_deleted_recording_gets_no_result(client, consented, audio, results, migrated_db):
+    recording_id, _ = _finalized(client, consented, audio)
+    results.down = True
+    job_id = _assign(client, recording_id).json()["resource_id"]
+    results.down = False
+    with psycopg.connect(migrated_db, autocommit=True) as connection:
+        connection.execute(
+            "UPDATE recordings SET deleted_at = now() WHERE id = %s", (recording_id,)
+        )
+    with psycopg.connect(migrated_db) as connection:
+        analysis.drain(connection, job_id, analysis.StubAnalyzer(), results)
+        assert connection.execute(
+            "SELECT status FROM analysis_jobs WHERE id = %s", (job_id,)
+        ).fetchone() == ("CANCELLED",)
+    assert results.items == {}
+    _assert_error(_result(client, recording_id, "bob"), 404, "NOT_FOUND")
+
+
+def test_a_text_job_for_an_old_version_is_cancelled_without_writing(
+    client, consented, audio, results, migrated_db
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    results.down = True
+    old_job = _assign(client, recording_id).json()["resource_id"]  # QUEUED, version 1
+    results.down = False
+    stub = analysis.StubAnalyzer().analyze_text(recording_id, "spk_2")
+    with psycopg.connect(migrated_db) as connection:
+        claimed = analysis.claim(connection, old_job)
+        connection.execute(
+            "UPDATE recordings SET speaker_assignment_version = 2 WHERE id = %s", (recording_id,)
+        )
+        connection.commit()
+        analysis.complete_text(connection, claimed, stub, results)
+        connection.commit()
+        assert connection.execute(
+            "SELECT status FROM analysis_jobs WHERE id = %s", (old_job,)
+        ).fetchone() == ("CANCELLED",)
+    assert results.items == {}
+
+
+def test_a_claimed_stub_text_job_cannot_write_after_analysis_revoke_and_regrant(
+    client, consented, audio, results, migrated_db
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    results.down = True
+    job_id = _assign(client, recording_id).json()["resource_id"]
+    results.down = False
+    with psycopg.connect(migrated_db) as db:
+        claimed = analysis.claim(db, job_id)
+        db.commit()
+        _consent(client, consented, "bob", False)
+        _consent(client, consented, "bob", True)
+        stub = analysis.StubAnalyzer().analyze_text(recording_id, "spk_2")
+        analysis.complete_text(db, claimed, stub, results)
+        assert db.execute(
+            "SELECT status FROM analysis_jobs WHERE id = %s", (job_id,)
+        ).fetchone() == ("CANCELLED",)
+    assert not results.items
+
+
+def test_dynamo_result_store_calls():
+    from botocore.session import Session
+    from botocore.stub import Stubber
+
+    from umsal_backend.results import DynamoResultStore
+
+    client = Session().create_client(
+        "dynamodb", region_name="ap-southeast-2", aws_access_key_id="x", aws_secret_access_key="y"
+    )
+    store = DynamoResultStore("results-table", "ap-southeast-2", client=client)
+    key = {"pk": {"S": "REC#rec_1"}, "sk": {"S": "RESULT#2"}}
+    with Stubber(client) as stub:
+        stub.add_response(
+            "put_item",
+            {},
+            {"TableName": "results-table", "Item": {**key, "body": {"S": '{"a": 1}'}}},
+        )
+        stub.add_response(
+            "get_item",
+            {"Item": {**key, "body": {"S": '{"a": 1}'}}},
+            {"TableName": "results-table", "Key": key, "ConsistentRead": True},
+        )
+        stub.add_response(
+            "get_item", {}, {"TableName": "results-table", "Key": key, "ConsistentRead": True}
+        )
+        stub.add_response("delete_item", {}, {"TableName": "results-table", "Key": key})
+        stub.add_client_error("get_item", "ProvisionedThroughputExceededException")
+        store.put("rec_1", 2, {"a": 1})
+        assert store.get("rec_1", 2) == {"a": 1}
+        assert store.get("rec_1", 2) is None
+        store.delete("rec_1", 2)
+        with pytest.raises(StorageUnavailable):
+            store.get("rec_1", 2)
+
+
+def test_result_store_from_env(monkeypatch):
+    from umsal_backend.results import result_store_from_env
+
+    assert result_store_from_env() is None
+    monkeypatch.setenv("DYNAMODB_TABLE", "results-table")
+    monkeypatch.setenv("AWS_REGION", "ap-southeast-2")
+    store = result_store_from_env()
+    assert (store.table, store.region) == ("results-table", "ap-southeast-2")
+
+
+def test_without_citations():
+    from umsal_backend.assignments import without_citations
+
+    text = "그는 「괜찮아」 『정말』 “응” 하고 12:30:05에 utt_9-a 답했다."
+    assert without_citations(text) == "그는 하고 에 답했다."
+
+
+def test_unsure_after_a_result_hides_the_old_version(client, consented, audio, results):
+    recording_id, _ = _finalized(client, consented, audio)
+    assert _assign(client, recording_id).status_code == 202
+    unsure = _assign(
+        client, recording_id, speaker=None, decision="UNSURE", version=1, key="assign-unsure"
+    )
+    assert unsure.status_code == 202
+    assert (recording_id, 1) in results.items  # left for deletion; never read again
+    view = _result(client, recording_id, "bob").json()
+    assert (view["status"], view["scope"]) == ("ABSTAINED", [])
+    assert "summary" not in view and "observations" not in view
+
+
+def test_assignment_rechecks_the_connection_and_the_uploaders_consent(client, consented, audio):
+    recording_id, _ = _finalized(client, consented, audio)
+    _consent(client, consented, "alice", allowed=False)  # the uploader, not the target
+    _assert_error(_assign(client, recording_id), 403, "CONSENT_REQUIRED")
+    _consent(client, consented, "alice", allowed=True)
+    client.delete(f"/api/connections/{consented}", headers=_h("bob", "delete-key-1"))
+    _assert_error(_assign(client, recording_id, key="assign-key-2"), 403, "FORBIDDEN")
+
+
+def test_two_concurrent_assignments_create_one_version(
+    client, consented, audio, migrated_db, run_concurrently
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    bob_id = _user_id(client, "bob")
+    statuses: list[int] = []
+
+    def assign(key: str):
+        def run():
+            body = {
+                "expected_version": 0,
+                "target_subject_id": bob_id,
+                "speaker_id": "spk_2",
+                "decision": "CONFIRMED",
+            }
+            response = client.put(
+                f"/api/recordings/{recording_id}/speaker-assignment",
+                headers=_h("alice", key),
+                json=body,
+            )
+            statuses.append(response.status_code)
+
+        return run
+
+    run_concurrently(assign("assign-race-1"), assign("assign-race-2"))
+    assert sorted(statuses) == [202, 409]
+    with psycopg.connect(migrated_db) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM speaker_assignments WHERE recording_id = %s", (recording_id,)
+        ).fetchone() == (1,)
+
+
+def test_a_malformed_stored_result_is_not_shown(client, consented, audio, results):
+    recording_id, _ = _finalized(client, consented, audio)
+    assert _assign(client, recording_id).status_code == 202
+    results.items[(recording_id, 1)] = {"status": "OBSERVED"}  # no limitations, no summary
+    _assert_error(_result(client, recording_id, "bob"), 503, "TEMPORARILY_UNAVAILABLE")
+
+
+def test_dynamo_result_store_rejects_a_malformed_item():
+    from botocore.session import Session
+    from botocore.stub import Stubber
+
+    from umsal_backend.results import DynamoResultStore
+
+    client = Session().create_client(
+        "dynamodb", region_name="ap-southeast-2", aws_access_key_id="x", aws_secret_access_key="y"
+    )
+    store = DynamoResultStore("results-table", "ap-southeast-2", client=client)
+    key = {"pk": {"S": "REC#rec_1"}, "sk": {"S": "RESULT#1"}}
+    params = {"TableName": "results-table", "Key": key, "ConsistentRead": True}
+    with Stubber(client) as stub:
+        stub.add_response("get_item", {"Item": {**key, "body": {"S": "not json"}}}, params)
+        stub.add_response("get_item", {"Item": {**key, "body": {"S": "[1]"}}}, params)
+        for _ in range(2):
+            with pytest.raises(StorageUnavailable):
+                store.get("rec_1", 1)
+
+
 def test_upload_keys_use_the_authenticated_internal_user(client, consented, audio):
     alice = _upload(client, consented).json()
     bob = _upload(client, consented, sub="bob", key="upload-bob-1").json()
@@ -620,3 +1089,103 @@ def test_reissued_url_and_finalize_use_the_persisted_source_key(
         assert connection.execute(
             "SELECT s3_key, s3_version_id FROM recordings WHERE id = %s", (ticket["recording_id"],)
         ).fetchone() == (key, "v1")
+
+
+def _cpu_job(client, consented, audio, monkeypatch):
+    pair = [_user_id(client, subject) for subject in ("alice", "bob")]
+    monkeypatch.setenv("UMSAL_CPU_PILOT_USERS", ",".join(pair))
+    ticket = _upload(client, consented, demo=True).json()
+    audio.put(_source_key(client, ticket["recording_id"]), "v1")
+    finalized = _finalize(client, ticket["upload_id"])
+    assert finalized.status_code == 202
+    return ticket["recording_id"], finalized.json()["resource_id"]
+
+
+def test_cpu_outbox_claim_confirm_commit_and_revoke(
+    client, consented, audio, results, migrated_db, monkeypatch, contract_schema
+):
+    from types import SimpleNamespace
+
+    from umsal_backend.worker_api import dispatch, operate
+
+    rec, audio_job = _cpu_job(client, consented, audio, monkeypatch)
+    assert (
+        client.get(f"/api/recordings/{rec}", headers=_h("alice")).json()["status"] == "QUEUED_AUDIO"
+    )
+    sent = []
+    sqs = SimpleNamespace(send_message=lambda **args: sent.append(args))
+    signing = SimpleNamespace(
+        bucket="synthetic-bucket",
+        client=SimpleNamespace(generate_presigned_url=lambda *args, **kw: "https://audio.test/one"),
+    )
+
+    def worker(job, operation, **fields):
+        with psycopg.connect(migrated_db) as db:
+            return operate(db, {"operation": operation, "job_id": job, **fields}, signing, results)
+
+    with psycopg.connect(migrated_db) as db:
+        assert dispatch(db, sqs, "test-queue") == 1
+        assert dispatch(db, sqs, "test-queue") == 0
+    assert json.loads(sent[0]["MessageBody"]) == {"job_id": audio_job}
+    claim = worker(audio_job, "claim")
+    assert claim["state"] == "claimed" and claim["stage"] == "AUDIO_PREP"
+    assert worker(audio_job, "claim") == {"state": "busy"}
+    intervals = [
+        {"speaker_id": "spk_1", "start_ms": 100, "end_ms": 1200},
+        {"speaker_id": "spk_2", "start_ms": 1300, "end_ms": 2200},
+    ]
+    assert worker(audio_job, "complete", attempt=0, output=intervals) == {"state": "stale"}
+    assert worker(audio_job, "complete", attempt=1, output=intervals) == {"state": "terminal"}
+    bob = client.get(f"/api/recordings/{rec}", headers=_h("bob")).json()
+    assert "speaker_intervals" not in bob
+    assert _result(client, rec, "alice").status_code == 409
+    text_job = _assign(client, rec, target_sub="alice", speaker="spk_1").json()["resource_id"]
+    claim = worker(text_job, "claim")
+    assert claim["speaker_id"] == "spk_1" and claim["stage"] == "TEXT_ANALYSIS"
+    output = {"category": "WORRY", "text": "합성 근거", "start_ms": 100, "end_ms": 1200}
+    wrong = {**output, "start_ms": 1300, "end_ms": 2200}
+    with pytest.raises(ValueError, match="confirmed speaker"):
+        worker(text_job, "complete", attempt=1, output=wrong)
+    assert worker(text_job, "complete", attempt=1, output=output) == {"state": "terminal"}
+    assert worker(text_job, "complete", attempt=1, output=wrong) == {"state": "terminal"}
+    result = _result(client, rec, "alice").json()
+    assert result["pipeline_version"] == "cpu-1"
+    assert result["observations"][0]["evidence"][0]["text"] == "합성 근거"
+    contract_schema("ResultView").validate(result)
+    _share(client, consented, "alice", ["summary"])
+    shared = _result(client, rec, "bob").json()
+    assert shared["scope"] == ["summary"] and "observations" not in shared
+    assert _result(client, rec, "alice").status_code == 200
+    _consent(client, consented, "bob", False)
+    _assert_error(_result(client, rec, "alice"), 403, "CONSENT_REQUIRED")
+    _consent(client, consented, "bob", True)
+    _assert_error(_result(client, rec, "alice"), 403, "CONSENT_REQUIRED")
+
+
+def test_cpu_revoke_after_claim_has_durable_cancel_and_no_payload(
+    client, consented, audio, results, migrated_db, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from umsal_backend.worker_api import operate
+
+    rec, job = _cpu_job(client, consented, audio, monkeypatch)
+    signing = SimpleNamespace(
+        bucket="synthetic-bucket",
+        client=SimpleNamespace(generate_presigned_url=lambda *args, **kw: "https://audio.test/one"),
+    )
+    with psycopg.connect(migrated_db) as db:
+        assert operate(db, {"operation": "claim", "job_id": job}, signing, results)["attempt"] == 1
+    _consent(client, consented, "bob", False)
+    with psycopg.connect(migrated_db) as db:
+        assert operate(
+            db, {"operation": "complete", "job_id": job, "attempt": 1}, signing, results
+        ) == {"state": "terminal"}
+        assert operate(
+            db, {"operation": "claim", "job_id": "job_" + "0" * 32}, signing, results
+        ) == {"state": "unknown"}
+        assert db.execute("SELECT status FROM analysis_jobs WHERE id=%s", (job,)).fetchone() == (
+            "CANCELLED",
+        )
+    assert client.get(f"/api/recordings/{rec}", headers=_h("alice")).json()["status"] == "CANCELLED"
+    assert not results.items
