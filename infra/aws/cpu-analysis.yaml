@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Private, bounded CPU analysis pilot for explicitly enrolled synthetic recordings.
+Description: Private CPU analysis with queue-driven capacity of zero or one and idle shutdown.
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -7,7 +7,7 @@ Metadata:
     must:
       - Reuse the existing Sydney RDS, S3 and DynamoDB resources
       - Worker invocation uses IAM and remains separate from the public API
-      - CPU instances launch separately and terminate on shutdown
+      - CPU instances scale from zero to one and terminate on idle shutdown
 Parameters:
   VpcId: {Type: 'AWS::EC2::VPC::Id'}
   SubnetId: {Type: 'AWS::EC2::Subnet::Id'}
@@ -15,6 +15,8 @@ Parameters:
   ArtifactBucket: {Type: String}
   ApiArtifactKey: {Type: String}
   WorkerArtifactKey: {Type: String}
+  WorkerArtifactSha256: {Type: String, AllowedPattern: '^[a-f0-9]{64}$'}
+  WorkerAmi: {Type: 'AWS::EC2::Image::Id'}
   AudioBucket: {Type: String}
   ResultTable: {Type: String}
   DbHost: {Type: String}
@@ -96,6 +98,10 @@ Resources:
             Resource: !GetAtt Queue.Arn
   LambdaEndpoint:
     Type: AWS::EC2::VPCEndpoint
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Workers call both the job API and capacity controller over private HTTPS.
+        must: [Use the endpoint-specific DNS name, Invoke only these two functions]
     Properties:
       VpcId: !Ref VpcId
       VpcEndpointType: Interface
@@ -109,7 +115,9 @@ Resources:
           - Effect: Allow
             Principal: '*'
             Action: lambda:InvokeFunction
-            Resource: !GetAtt WorkerApi.Arn
+            Resource:
+              - !GetAtt WorkerApi.Arn
+              - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-cpu-control'
   ApiLogs:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -225,6 +233,10 @@ Resources:
           UMSAL_QUEUE_URL: !Ref Queue
   PublisherScheduleRole:
     Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Scheduler publishes committed jobs and reconciles worker capacity each minute.
+        must: [Invoke only the two scheduled functions]
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -238,7 +250,9 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - {Effect: Allow, Action: 'lambda:InvokeFunction', Resource: !GetAtt Publisher.Arn}
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: [!GetAtt Publisher.Arn, !GetAtt Controller.Arn]
   PublisherSchedule:
     Type: AWS::Scheduler::Schedule
     Properties:
@@ -269,11 +283,150 @@ Resources:
               - Effect: Allow
                 Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:ChangeMessageVisibility]
                 Resource: !GetAtt Queue.Arn
-              - {Effect: Allow, Action: 'lambda:InvokeFunction', Resource: !GetAtt WorkerApi.Arn}
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt WorkerApi.Arn
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-cpu-control'
   WorkerProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles: [!Ref WorkerRole]
+  ControllerLogs:
+    Type: AWS::Logs::LogGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Record queue depth, desired capacity and idle decisions without recording content.
+        must: [Seven day retention]
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-cpu-control'
+      RetentionInDays: 7
+  ControllerRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: The non-VPC controller adjusts only this CPU group and reads only its queue depth.
+        must: [No audio or database access, No instance launch or termination API permissions]
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}
+      Policies:
+        - PolicyName: CpuCapacityOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ControllerLogs.Arn
+              - {Effect: Allow, Action: 'sqs:GetQueueAttributes', Resource: !GetAtt Queue.Arn}
+              - {Effect: Allow, Action: 'autoscaling:DescribeAutoScalingGroups', Resource: '*'}
+              - Effect: Allow
+                Action: [autoscaling:SetDesiredCapacity, autoscaling:SetInstanceProtection]
+                Resource: !Sub 'arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${AWS::StackName}-cpu'
+  Controller:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Serialize scheduled capacity updates and authenticated worker idle reports.
+        must: [Reserved concurrency one, No public endpoint, No VPC or extra network endpoints]
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-cpu-control'
+      Runtime: python3.12
+      Handler: umsal_backend.worker_control.handler
+      Role: !GetAtt ControllerRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ApiArtifactKey}
+      MemorySize: 128
+      Timeout: 25
+      ReservedConcurrentExecutions: 1
+      LoggingConfig: {LogGroup: !Ref ControllerLogs}
+      Environment:
+        Variables:
+          UMSAL_QUEUE_URL: !Ref Queue
+          UMSAL_CPU_GROUP: !Sub '${AWS::StackName}-cpu'
+  ControllerSchedule:
+    Type: AWS::Scheduler::Schedule
+    DependsOn: WorkerGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Start from zero and recover capacity even after a worker exits unexpectedly.
+        must: [One minute reconciliation, Never receive or delete SQS messages]
+    Properties:
+      ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow: {Mode: 'OFF'}
+      Target:
+        Arn: !GetAtt Controller.Arn
+        RoleArn: !GetAtt PublisherScheduleRole.Arn
+        Input: '{"operation":"tick"}'
+        RetryPolicy: {MaximumEventAgeInSeconds: 60, MaximumRetryAttempts: 0}
+  WorkerLaunch:
+    Type: AWS::EC2::LaunchTemplate
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Reproduce the verified x86 CPU runtime and pinned model bundle for each cold start.
+        must: [IMDSv2, No public IP or inbound ports, Encrypted disposable root disk, Fixed checksum]
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref WorkerAmi
+        InstanceType: m7i-flex.large
+        IamInstanceProfile: {Name: !Ref WorkerProfile}
+        InstanceInitiatedShutdownBehavior: terminate
+        MetadataOptions: {HttpTokens: required, HttpEndpoint: enabled}
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: false
+            DeleteOnTermination: true
+            Groups: [!Ref WorkerSg]
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: {VolumeSize: 16, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true}
+        TagSpecifications:
+          - ResourceType: volume
+            Tags:
+              - {Key: Project, Value: umsal-backend}
+              - {Key: UmsalWorker, Value: cpu-pilot}
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                #!/bin/bash
+                set -Eeuo pipefail
+                trap 'systemctl poweroff' EXIT
+                umask 077
+                export AWS_DEFAULT_REGION=${AWS::Region}
+                systemd-run --unit=umsal-cpu-deadline --on-active=20m /usr/sbin/shutdown -h now
+                install -d -m 0755 /opt/umsal
+                cd /opt/umsal
+                timeout 180 aws s3 cp 's3://${ArtifactBucket}/${WorkerArtifactKey}' bundle.tar.gz --only-show-errors
+                echo '${WorkerArtifactSha256}  bundle.tar.gz' | sha256sum --check
+                tar --no-same-owner -xzf bundle.tar.gz
+                rm bundle.tar.gz
+                chmod -R a+rX /opt/umsal
+                echo UMSAL_CPU_BUNDLE_VERIFIED
+                timeout --kill-after=10 900 runuser -u ec2-user -- env PYTHONPATH=/opt/umsal/site AWS_DEFAULT_REGION=${AWS::Region} AWS_ENDPOINT_URL_LAMBDA=https://${EndpointDns} /opt/umsal/python/bin/python3 /opt/umsal/run.py --queue-url '${Queue}' --worker-api '${WorkerApi}' --audio-host '${AudioBucket}.s3.${AWS::Region}.amazonaws.com' --models /opt/umsal/models --control-function '${AWS::StackName}-cpu-control' --idle-seconds 60
+              - EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt LambdaEndpoint.DnsEntries]]]
+  WorkerGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Enforce one worker at most and keep capacity zero between queued analyses.
+        must: [Protect new workers until they report idle, Keep root volumes disposable]
+    Properties:
+      AutoScalingGroupName: !Sub '${AWS::StackName}-cpu'
+      MinSize: '0'
+      MaxSize: '1'
+      DesiredCapacity: '0'
+      NewInstancesProtectedFromScaleIn: true
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 180
+      VPCZoneIdentifier: [!Ref SubnetId]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WorkerLaunch
+        Version: !GetAtt WorkerLaunch.LatestVersionNumber
+      Tags:
+        - {Key: Project, Value: umsal-backend, PropagateAtLaunch: true}
+        - {Key: UmsalWorker, Value: cpu-pilot, PropagateAtLaunch: true}
 Outputs:
   QueueUrl: {Value: !Ref Queue}
   WorkerApi: {Value: !Ref WorkerApi}
@@ -281,3 +434,5 @@ Outputs:
   Publisher: {Value: !Ref Publisher}
   WorkerSecurityGroup: {Value: !Ref WorkerSg}
   InstanceProfile: {Value: !Ref WorkerProfile}
+  CpuGroup: {Value: !Ref WorkerGroup}
+  CpuController: {Value: !Ref Controller}

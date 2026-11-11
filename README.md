@@ -48,3 +48,4 @@ AWS 배포 절차와 확인 기록은 [백엔드 API AWS 배포](docs/aws-deploy
 현재 녹음 API는 업로드 생성·완료·작업/녹음 조회(분석 대역 `stub-1`)까지 구현되어 있다. 새 원음 키는 인증된 내부 사용자별로 분리하며, 기존 녹음 키의 재발급·finalize도 유지한다. 운영 소스의 출처와 웹·Android Cognito 파라미터는 [운영 코드·설정 복원 기록](docs/deployed-mobile-restoration.md)을 따른다. 실제 모델·화자 확인/결과/삭제 API는 후속 범위다.
 
 CPU 모델 시연의 입력 형식, 모델 리비전과 운영 절차는 [CPU 시연](workers/cpu/README.md)을 따른다.
+CPU 워커는 분석 큐에 맞춰 0~1대로 자동 기동하며, 처리 후 60초간 새 작업이 없으면 종료한다.

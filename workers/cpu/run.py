@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import boto3
 from botocore.config import Config
@@ -108,22 +108,26 @@ def process(sqs, service, config, message, models):
     return True
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--queue-url", required=True)
-    parser.add_argument("--worker-api", required=True)
-    parser.add_argument("--audio-host", required=True)
-    parser.add_argument("--models", type=Path, required=True)
-    parser.add_argument("--idle-seconds", type=int, default=240)
-    parser.add_argument("--deadline-seconds", type=int, default=900)
-    args = parser.parse_args()
-    config = Config(connect_timeout=4, read_timeout=30, retries={"total_max_attempts": 2})
-    sqs = boto3.client("sqs", config=config)
-    service = boto3.client("lambda", config=config)
-    models = Models(args.models)
+def instance_identity():
+    request = Request(
+        "http://169.254.169.254/latest/api/token",
+        method="PUT",
+        headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+    )
+    with urlopen(request, timeout=2) as response:
+        token = response.read().decode()
+    request = Request(
+        "http://169.254.169.254/latest/meta-data/instance-id",
+        headers={"X-aws-ec2-metadata-token": token},
+    )
+    with urlopen(request, timeout=2) as response:
+        return response.read().decode()
+
+
+def run(sqs, service, args, models, instance_id):
     deadline = time.monotonic() + args.deadline_seconds
     idle = time.monotonic() + args.idle_seconds
-    while time.monotonic() < min(deadline, idle):
+    while time.monotonic() < deadline:
         try:
             messages = sqs.receive_message(
                 QueueUrl=args.queue_url,
@@ -134,9 +138,37 @@ def main():
             for message in messages:
                 if process(sqs, service, args, message, models):
                     idle = time.monotonic() + args.idle_seconds
+            if not messages and time.monotonic() >= idle:
+                if not args.control_function:
+                    return
+                result = invoke(
+                    service, args.control_function, "idle", None, instance_id=instance_id
+                )
+                if result["state"] == "stop":
+                    print(json.dumps({"event": "worker_exit", "reason": "idle"}), flush=True)
+                    return
+                idle = time.monotonic() + args.idle_seconds
         except Exception as error:
             print(json.dumps({"event": "worker_error", "kind": type(error).__name__}), flush=True)
             time.sleep(3)
+    print(json.dumps({"event": "worker_exit", "reason": "deadline"}), flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--queue-url", required=True)
+    parser.add_argument("--worker-api", required=True)
+    parser.add_argument("--audio-host", required=True)
+    parser.add_argument("--models", type=Path, required=True)
+    parser.add_argument("--control-function")
+    parser.add_argument("--idle-seconds", type=int, default=60)
+    parser.add_argument("--deadline-seconds", type=int, default=900)
+    args = parser.parse_args()
+    config = Config(connect_timeout=4, read_timeout=30, retries={"total_max_attempts": 2})
+    sqs = boto3.client("sqs", config=config)
+    service = boto3.client("lambda", config=config)
+    instance_id = instance_identity() if args.control_function else None
+    run(sqs, service, args, Models(args.models), instance_id)
 
 
 if __name__ == "__main__":
