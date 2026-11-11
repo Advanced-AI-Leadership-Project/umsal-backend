@@ -889,6 +889,26 @@ def test_a_text_job_for_an_old_version_is_cancelled_without_writing(
     assert results.items == {}
 
 
+def test_a_claimed_stub_text_job_cannot_write_after_analysis_revoke_and_regrant(
+    client, consented, audio, results, migrated_db
+):
+    recording_id, _ = _finalized(client, consented, audio)
+    results.down = True
+    job_id = _assign(client, recording_id).json()["resource_id"]
+    results.down = False
+    with psycopg.connect(migrated_db) as db:
+        claimed = analysis.claim(db, job_id)
+        db.commit()
+        _consent(client, consented, "bob", False)
+        _consent(client, consented, "bob", True)
+        stub = analysis.StubAnalyzer().analyze_text(recording_id, "spk_2")
+        analysis.complete_text(db, claimed, stub, results)
+        assert db.execute(
+            "SELECT status FROM analysis_jobs WHERE id = %s", (job_id,)
+        ).fetchone() == ("CANCELLED",)
+    assert not results.items
+
+
 def test_dynamo_result_store_calls():
     from botocore.session import Session
     from botocore.stub import Stubber
@@ -1132,6 +1152,10 @@ def test_cpu_outbox_claim_confirm_commit_and_revoke(
     assert result["pipeline_version"] == "cpu-1"
     assert result["observations"][0]["evidence"][0]["text"] == "합성 근거"
     contract_schema("ResultView").validate(result)
+    _share(client, consented, "alice", ["summary"])
+    shared = _result(client, rec, "bob").json()
+    assert shared["scope"] == ["summary"] and "observations" not in shared
+    assert _result(client, rec, "alice").status_code == 200
     _consent(client, consented, "bob", False)
     _assert_error(_result(client, rec, "alice"), 403, "CONSENT_REQUIRED")
     _consent(client, consented, "bob", True)

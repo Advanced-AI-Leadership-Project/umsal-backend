@@ -140,13 +140,20 @@ def enqueue(
     assignment_version: int = 0,
     *,
     pipeline_version: str = PIPELINE_VERSION,
+    consent_versions: list[int] | None = None,
 ) -> str:
     """Add a QUEUED job and point the recording at it (caller holds the row lock)."""
     queued = STAGE_STATUS[stage][0]
     job_id = db.execute(
-        "INSERT INTO analysis_jobs (recording_id, stage, pipeline_version, assignment_version) "
-        "VALUES (%s, %s, %s, %s) RETURNING id",
-        (recording_id, stage, pipeline_version, assignment_version),
+        "INSERT INTO analysis_jobs (recording_id, stage, pipeline_version, assignment_version, "
+        "consent_versions) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (
+            recording_id,
+            stage,
+            pipeline_version,
+            assignment_version,
+            Jsonb(consent_versions) if consent_versions is not None else None,
+        ),
     ).fetchone()[0]
     db.execute(
         "UPDATE recordings SET current_job_id = %s, status = %s, updated_at = now() WHERE id = %s",
@@ -240,19 +247,33 @@ def complete_audio(db: psycopg.Connection, claimed: Claim, result: AudioPrepResu
 def complete_text(
     db: psycopg.Connection, claimed: Claim, result: TextResult, results: ResultStore
 ) -> None:
-    """Write the body under the row lock, then mark COMPLETED (committed by the caller).
+    """Fence writes with the current recording, analysis permission and attempt."""
+    from umsal_backend.pilot import grant_versions
 
-    A deleted recording or a newer assignment (which cancels this job) ends the job
-    CANCELLED without writing. If this claim lost its lease after the write, the item
-    has the same key the newer claim writes, so nothing is left that could be shown.
-    """
     row = db.execute(
-        "SELECT deleted_at IS NULL, speaker_assignment_version FROM recordings "
-        "WHERE id = %s FOR UPDATE",
+        "SELECT deleted_at IS NULL, speaker_assignment_version, connection_id, current_job_id "
+        "FROM recordings WHERE id = %s FOR UPDATE",
         (claimed.recording_id,),
     ).fetchone()
     if row is None or not row[0] or row[1] != claimed.assignment_version:
         _finish_job(db, claimed, "CANCELLED", None)
+        return
+    current = grant_versions(db, row[2])
+    snapshot = db.execute(
+        "SELECT consent_versions FROM analysis_jobs WHERE id = %s", (claimed.job_id,)
+    ).fetchone()
+    if (
+        current is None
+        or row[3] != claimed.job_id
+        or snapshot is None
+        or (snapshot[0] is not None and snapshot[0] != current)
+    ):
+        if _finish_job(db, claimed, "CANCELLED", "RECORDING_OR_CONSENT_CHANGED"):
+            db.execute(
+                "UPDATE recordings SET status='CANCELLED', updated_at=now() "
+                "WHERE id=%s AND current_job_id=%s",
+                (claimed.recording_id, claimed.job_id),
+            )
         return
     if not _finish_job(db, claimed, "SUCCEEDED", None):
         return

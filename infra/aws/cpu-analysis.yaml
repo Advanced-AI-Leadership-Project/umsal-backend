@@ -39,14 +39,26 @@ Resources:
   QueueTls:
     Type: AWS::SQS::QueuePolicy
     Properties:
-      Queues: [!Ref Queue, !Ref DeadLetter]
+      Queues: [!Ref Queue]
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Deny
             Principal: '*'
             Action: 'sqs:*'
-            Resource: [!GetAtt Queue.Arn, !GetAtt DeadLetter.Arn]
+            Resource: !GetAtt Queue.Arn
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+  DeadLetterTls:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref DeadLetter]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: 'sqs:*'
+            Resource: !GetAtt DeadLetter.Arn
             Condition: {Bool: {'aws:SecureTransport': 'false'}}
   WorkerSg:
     Type: AWS::EC2::SecurityGroup

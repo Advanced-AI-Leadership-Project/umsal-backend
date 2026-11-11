@@ -149,7 +149,8 @@ def assign_speaker(
         # Lock order recording -> connection, as in finalize (design 6).
         _require_upload_allowed(db, connection_id, user.user_id)
         snapshot = pilot.audio_snapshot(db, recording_id)
-        if snapshot is not None and snapshot != pilot.grant_versions(db, connection_id):
+        versions = pilot.grant_versions(db, connection_id)
+        if snapshot is not None and snapshot != versions:
             raise ApiError(
                 403, "CONSENT_REQUIRED", "Analysis consent changed after audio processing."
             )
@@ -176,7 +177,9 @@ def assign_speaker(
             job_id = (
                 pilot.enqueue(db, recording_id, "TEXT_ANALYSIS", snapshot, new_version)
                 if snapshot
-                else analysis.enqueue(db, recording_id, "TEXT_ANALYSIS", new_version)
+                else analysis.enqueue(
+                    db, recording_id, "TEXT_ANALYSIS", new_version, consent_versions=versions
+                )
             )
             queued.append((job_id, snapshot is not None))
             resource_id = job_id

@@ -16,7 +16,7 @@ def grant_versions(db: psycopg.Connection, connection_id: str) -> list[int] | No
     if row is None or row[0] != "ACTIVE":
         return None
     grants = db.execute(
-        "SELECT version, analysis_allowed FROM consent_grants "
+        "SELECT analysis_revision, analysis_allowed FROM consent_grants "
         "WHERE connection_id = %s ORDER BY subject_id FOR SHARE",
         (connection_id,),
     ).fetchall()
