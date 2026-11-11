@@ -31,6 +31,8 @@ from umsal_backend.results import ResultStore
 
 PIPELINE_VERSION = "stub-1"
 CPU_PIPELINE_VERSION = "cpu-1"
+RECORDING_PIPELINE_VERSION = "cpu-2"
+CPU_PIPELINES = (CPU_PIPELINE_VERSION, RECORDING_PIPELINE_VERSION)
 LEASE = timedelta(minutes=2)
 STALE_QUEUED = timedelta(seconds=30)
 MAX_ATTEMPTS = 3

@@ -30,7 +30,7 @@ def invoke(client, function, operation, job_id, **fields):
 def download(claim, host, path):
     url = urlsplit(claim["url"])
     size = claim["size_bytes"]
-    if url.scheme != "https" or url.netloc != host or not 0 < size <= 4_000_000:
+    if url.scheme != "https" or url.netloc != host or not 0 < size <= 52_428_800:
         raise InvalidSample("unexpected audio source")
     with urlopen(claim["url"], timeout=20) as response:
         data = response.read(size + 1)
@@ -74,7 +74,15 @@ def process(sqs, service, config, message, models):
         with tempfile.TemporaryDirectory(prefix="umsal-cpu-") as folder:
             audio = Path(folder) / "audio.wav"
             download(claim, config.audio_host, audio)
-            if claim["stage"] == "AUDIO_PREP":
+            if claim.get("pipeline_version") == "cpu-2":
+                result = (
+                    models.recording_audio_prep(audio)
+                    if claim["stage"] == "AUDIO_PREP"
+                    else models.recording_text_analysis(
+                        audio, claim["speaker_id"], claim["speaker_intervals"]
+                    )
+                )
+            elif claim["stage"] == "AUDIO_PREP":
                 result = models.audio_prep(audio)
             else:
                 result = models.text_analysis(audio, claim["speaker_id"])

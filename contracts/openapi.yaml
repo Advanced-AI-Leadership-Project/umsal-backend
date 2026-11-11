@@ -645,7 +645,12 @@ paths:
     post:
       operationId: createUpload
       summary: 양쪽 분석 동의 확인 후 metadata·업로드 URL 발급
-      description: 업로더 선언은 상대 grant를 대체하지 않는다. 50MiB/10분은 제안 한도. 실제media 검증은 worker. API는 metadata만 처리.
+      description: >-
+        업로더 확인과 별개로 서버가 현재 연결과 양쪽 계정의 분석 동의를 검사한다.
+        demo가 없거나 false이면 실제 녹음이다. CpuRealAudioEnabled=true 배포가 필요하며,
+        비활성 상태에서는 503 TEMPORARILY_UNAVAILABLE을 반환하고 업로드 URL을 발급하지 않는다.
+        demo=true는 합성 출처 표시이며 동의를 대신하지 않는다. cpu-2는 WAV·MP3·M4A,
+        50 MiB·600초를 지원하며 실제 디코딩·길이·화자 검증은 worker가 수행한다.
       security:
       - CognitoBearer: []
       tags:
@@ -715,8 +720,12 @@ paths:
     post:
       operationId: finalizeUpload
       summary: 업로드 metadata 고정과 입력준비 예약
-      description: S3 지정version metadata만 검사해 PREPARING_INPUT. maintenance Lambda가 현재 동의/삭제 재검사 후 accepted
-        key로 version 고정복사하고 AUDIO_PREP를 outbox에 등록. decoder 검증 성공을 의미하지 않음.
+      description: >-
+        서버가 현재 양쪽 동의와 삭제 여부, S3 지정 버전의 크기·체크섬을 재검사하고
+        고정한 version으로 AUDIO_PREP를 예약한다. 실제 녹음은 접수 시 저장한 demo=false를
+        사용하며 CpuRealAudioEnabled=true가 필요하다. 비활성이면 503 TEMPORARILY_UNAVAILABLE을
+        반환한다. 요청의 demo 값으로 저장된 출처를 바꾸지 않는다. 디코딩 성공과 분석 완료는
+        작업·녹음 상태로 따로 확인한다.
       security:
       - CognitoBearer: []
       tags:

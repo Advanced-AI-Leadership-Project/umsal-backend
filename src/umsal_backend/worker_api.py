@@ -18,7 +18,7 @@ from umsal_backend.storage import S3AudioStore, audio_store_from_env
 
 ID = re.compile(r"^job_[a-f0-9]{32}$")
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED", "ABSTAINED", "EXPIRED"}
-SPEAKER = Literal["spk_1", "spk_2"]
+SPEAKER = Annotated[str, Field(pattern=r"^spk_[1-8]$")]
 Category = Literal["WORRY", "SLEEP", "APPETITE"]
 SUMMARY = {
     "WORRY": "확인한 화자의 말에서 걱정과 관련된 표현이 관찰됐어요.",
@@ -26,13 +26,14 @@ SUMMARY = {
     "APPETITE": "확인한 화자의 말에서 식사나 식욕과 관련된 표현이 관찰됐어요.",
 }
 LIMITATION = "짧은 합성 음성에 대한 CPU 모델의 시연 결과예요. 대화의 맥락을 놓칠 수 있어요."
+RECORDING_LIMITATION = "화자 구분과 음성 전사에 오류가 포함될 수 있어요. 원음과 함께 확인해 주세요."
 
 
 class Interval(BaseModel):
     model_config = {"strict": True, "extra": "forbid"}
     speaker_id: SPEAKER
-    start_ms: int = Field(ge=0, lt=60000)
-    end_ms: int = Field(gt=0, le=60000)
+    start_ms: int = Field(ge=0, lt=600000)
+    end_ms: int = Field(gt=0, le=600000)
 
     @model_validator(mode="after")
     def ordered(self) -> Interval:
@@ -88,26 +89,29 @@ def operate(db: psycopg.Connection, event: dict, audio: S3AudioStore, results: R
     recording_id = link[0]
     recording = db.execute(
         "SELECT connection_id, current_job_id, speaker_assignment_version, deleted_at, "
-        "s3_key, s3_version_id, size_bytes, sha256, speaker_intervals "
+        "s3_key, s3_version_id, size_bytes, sha256, speaker_intervals, demo "
         "FROM recordings WHERE id=%s FOR UPDATE",
         (recording_id,),
     ).fetchone()
     if recording is None:
         return {"state": "unknown"}
-    connection, current, version, deleted, key, object_version, size, digest, intervals = recording
+    connection, current, version, deleted, key, object_version, size, digest, intervals, demo = (
+        recording
+    )
     consent = pilot.grant_versions(db, connection)
     job = db.execute(
         "SELECT j.stage, j.status, j.assignment_version, j.attempt, "
-        "COALESCE(j.lease_expires_at > clock_timestamp(), false), o.consent_versions "
+        "COALESCE(j.lease_expires_at > clock_timestamp(), false), "
+        "o.consent_versions, j.pipeline_version "
         "FROM analysis_jobs j JOIN analysis_outbox o ON o.job_id=j.id "
-        "WHERE j.id=%s AND j.pipeline_version=%s FOR UPDATE OF j",
-        (job_id, analysis.CPU_PIPELINE_VERSION),
+        "WHERE j.id=%s AND j.pipeline_version = ANY(%s) FOR UPDATE OF j",
+        (job_id, list(analysis.CPU_PIPELINES)),
     ).fetchone()
     if job is None:
         return {"state": "unknown"}
     if job[1] in TERMINAL:
         return {"state": "terminal"}
-    stage, status, assignment, attempt, live, snapshot = job
+    stage, status, assignment, attempt, live, snapshot, pipeline = job
     if deleted or current != job_id or assignment != version or snapshot != consent:
         _close(db, job_id, recording_id, "CANCELLED", "RECORDING_OR_CONSENT_CHANGED")
         return {"state": "terminal"}
@@ -127,7 +131,9 @@ def operate(db: psycopg.Connection, event: dict, audio: S3AudioStore, results: R
                 "WHERE recording_id=%s AND version=%s AND decision='CONFIRMED'",
                 (recording_id, version),
             ).fetchone()
-            if assignment_row is None or assignment_row[0] not in {"spk_1", "spk_2"}:
+            if assignment_row is None or assignment_row[0] not in {
+                interval["speaker_id"] for interval in intervals or []
+            }:
                 _close(db, job_id, recording_id, "FAILED", "ASSIGNMENT_MISSING")
                 return {"state": "terminal"}
             speaker = assignment_row[0]
@@ -153,6 +159,8 @@ def operate(db: psycopg.Connection, event: dict, audio: S3AudioStore, results: R
             "size_bytes": size,
             "sha256": digest,
             "speaker_id": speaker,
+            "speaker_intervals": intervals if stage == "TEXT_ANALYSIS" else None,
+            "pipeline_version": pipeline,
         }
     if type(event.get("attempt")) is not int or event["attempt"] != attempt or not live:
         return {"state": "stale"}
@@ -182,10 +190,19 @@ def operate(db: psycopg.Connection, event: dict, audio: S3AudioStore, results: R
     if stage == "AUDIO_PREP":
         from pydantic import TypeAdapter
 
-        output = TypeAdapter(Annotated[list[Interval], Field(min_length=2, max_length=80)])
+        output = TypeAdapter(Annotated[list[Interval], Field(min_length=1, max_length=2000)])
         candidates = output.validate_python(event.get("output"))
-        if {candidate.speaker_id for candidate in candidates} != {"spk_1", "spk_2"}:
+        if pipeline == analysis.CPU_PIPELINE_VERSION and (
+            {candidate.speaker_id for candidate in candidates} != {"spk_1", "spk_2"}
+            or any(candidate.end_ms > 60000 for candidate in candidates)
+        ):
             raise ValueError("two channels must contain speech")
+        candidates.sort(key=lambda interval: interval.start_ms)
+        if pipeline == analysis.RECORDING_PIPELINE_VERSION and any(
+            left.end_ms > right.start_ms
+            for left, right in zip(candidates, candidates[1:], strict=False)
+        ):
+            raise ValueError("speaker intervals must be exclusive")
         db.execute(
             "UPDATE recordings SET speaker_intervals=%s WHERE id=%s",
             (Jsonb([candidate.model_dump() for candidate in candidates]), recording_id),
@@ -193,7 +210,7 @@ def operate(db: psycopg.Connection, event: dict, audio: S3AudioStore, results: R
     else:
         output = TextOutput.model_validate(event.get("output"))
         observations = []
-        summary = "확인한 화자의 말에서 시연 범위의 단서를 찾지 못했어요."
+        summary = "확인한 화자의 말에서 걱정·수면·식사와 관련된 단서를 찾지 못했어요."
         if output.category:
             speaker = db.execute(
                 "SELECT speaker_id FROM speaker_assignments WHERE recording_id=%s AND version=%s",
@@ -201,8 +218,9 @@ def operate(db: psycopg.Connection, event: dict, audio: S3AudioStore, results: R
             ).fetchone()[0]
             matches_interval = any(
                 i["speaker_id"] == speaker
-                and i["start_ms"] == output.start_ms
-                and i["end_ms"] == output.end_ms
+                and output.start_ms is not None
+                and output.end_ms is not None
+                and i["start_ms"] <= output.start_ms < output.end_ms <= i["end_ms"]
                 for i in intervals or []
             )
             if not matches_interval or not output.text:
@@ -228,10 +246,10 @@ def operate(db: psycopg.Connection, event: dict, audio: S3AudioStore, results: R
             "OBSERVED" if observations else "NOT_OBSERVED",
             summary,
             observations,
-            [LIMITATION],
-            True,
+            [LIMITATION if demo else RECORDING_LIMITATION],
+            demo,
         )
-        results.put(recording_id, version, result.body(analysis.CPU_PIPELINE_VERSION))
+        results.put(recording_id, version, result.body(pipeline))
     db.execute(
         "UPDATE analysis_jobs SET status='SUCCEEDED', lease_expires_at=NULL, updated_at=now() "
         "WHERE id=%s",

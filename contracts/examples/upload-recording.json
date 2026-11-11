@@ -1,0 +1,10 @@
+{
+  "connection_id": "con_example",
+  "occurred_at": "2026-11-11T05:00:00Z",
+  "filename": "example-call.wav",
+  "declared_content_type": "audio/wav",
+  "size_bytes": 32044,
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "participants_permission_confirmed": true,
+  "demo": false
+}

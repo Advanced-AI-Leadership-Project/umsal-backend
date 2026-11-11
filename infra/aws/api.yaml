@@ -22,6 +22,11 @@ Metadata:
       - No secrets in parameters, environment variables or logs (JWKS are public keys)
       - Leaving every stage-2 parameter empty must keep the stage-1 deployment unchanged
 Parameters:
+  CpuRealAudioEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: Enable consent-checked CPU recording analysis after the compatible worker is deployed
   CpuPilotUsers:
     Type: String
     Default: ''
@@ -249,6 +254,7 @@ Resources:
         Variables:
           UMSAL_ENV: !Ref Environment
           UMSAL_CPU_PILOT_USERS: !Ref CpuPilotUsers
+          UMSAL_CPU_REAL_AUDIO_ENABLED: !Ref CpuRealAudioEnabled
           DB_HOST: !If [UseDatabase, !Ref DbHost, !Ref AWS::NoValue]
           DB_USER: !If [UseDatabase, !Ref DbUser, !Ref AWS::NoValue]
           DB_NAME: !If [UseDatabase, umsal, !Ref AWS::NoValue]

@@ -175,7 +175,14 @@ def assign_speaker(
         )
         if confirmed:
             job_id = (
-                pilot.enqueue(db, recording_id, "TEXT_ANALYSIS", snapshot, new_version)
+                pilot.enqueue(
+                    db,
+                    recording_id,
+                    "TEXT_ANALYSIS",
+                    snapshot,
+                    new_version,
+                    pipeline_version=pilot.audio_pipeline(db, recording_id),
+                )
                 if snapshot
                 else analysis.enqueue(
                     db, recording_id, "TEXT_ANALYSIS", new_version, consent_versions=versions
@@ -306,7 +313,14 @@ def get_result(
             target_subject_id=subject,
             scope=[],
             limitations=[ABSTAINED_LIMITATION],
-            demo=True,
+            demo=db.execute("SELECT demo FROM recordings WHERE id=%s", (recording_id,)).fetchone()[
+                0
+            ],
+            **(
+                {"pipeline_version": pilot.audio_pipeline(db, recording_id)}
+                if snapshot is not None
+                else {}
+            ),
         )
     if results is None:
         raise ApiError(503, "TEMPORARILY_UNAVAILABLE", "Result storage is not configured.")
@@ -327,8 +341,8 @@ def get_result(
             limitations=list(body["limitations"]),
             demo=bool(body.get("demo", True)),
             **(
-                {"pipeline_version": analysis.CPU_PIPELINE_VERSION}
-                if body.get("pipeline_version") == analysis.CPU_PIPELINE_VERSION
+                {"pipeline_version": body["pipeline_version"]}
+                if body.get("pipeline_version") in analysis.CPU_PIPELINES
                 else {}
             ),
             **_filtered(body, scopes),
