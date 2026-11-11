@@ -1,0 +1,270 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private, bounded CPU analysis pilot for explicitly enrolled synthetic recordings.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    must:
+      - Reuse the existing Sydney RDS, S3 and DynamoDB resources
+      - Worker invocation uses IAM and remains separate from the public API
+      - CPU instances launch separately and terminate on shutdown
+Parameters:
+  VpcId: {Type: 'AWS::EC2::VPC::Id'}
+  SubnetId: {Type: 'AWS::EC2::Subnet::Id'}
+  ApiSecurityGroup: {Type: 'AWS::EC2::SecurityGroup::Id'}
+  ArtifactBucket: {Type: String}
+  ApiArtifactKey: {Type: String}
+  WorkerArtifactKey: {Type: String}
+  AudioBucket: {Type: String}
+  ResultTable: {Type: String}
+  DbHost: {Type: String}
+  DbResourceId: {Type: String}
+Resources:
+  DeadLetter:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+  Queue:
+    Type: AWS::SQS::Queue
+    Metadata:
+      com.aws.cloudformation.Context:
+        must: [Messages contain only a job ID, Delete only after the durable terminal ACK]
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 86400
+      VisibilityTimeout: 150
+      ReceiveMessageWaitTimeSeconds: 10
+      RedrivePolicy: {deadLetterTargetArn: !GetAtt DeadLetter.Arn, maxReceiveCount: 8}
+  QueueTls:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref Queue, !Ref DeadLetter]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: 'sqs:*'
+            Resource: [!GetAtt Queue.Arn, !GetAtt DeadLetter.Arn]
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+  WorkerSg:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        must: [No inbound traffic, private subnet with S3 gateway endpoint]
+    Properties:
+      GroupDescription: UMSAL CPU worker HTTPS to service endpoints
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+  EndpointSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTPS for UMSAL analysis endpoints
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref WorkerSg}
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref ApiSecurityGroup}
+  SqsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.sqs'
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref SubnetId]
+      SecurityGroupIds: [!Ref EndpointSg]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: [sqs:SendMessage, sqs:ReceiveMessage, sqs:DeleteMessage, sqs:ChangeMessageVisibility]
+            Resource: !GetAtt Queue.Arn
+  LambdaEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.lambda'
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref SubnetId]
+      SecurityGroupIds: [!Ref EndpointSg]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: lambda:InvokeFunction
+            Resource: !GetAtt WorkerApi.Arn
+  ApiLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-worker-api'
+      RetentionInDays: 7
+  PublisherLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-publisher'
+      RetentionInDays: 7
+  DatabaseAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: rds-db:connect
+            Resource: !Sub 'arn:${AWS::Partition}:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${DbResourceId}/umsal_app'
+          - Effect: Allow
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+  WorkerApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}
+      ManagedPolicyArns: [!Ref DatabaseAccess]
+      Policies:
+        - PolicyName: WorkerApiStorage
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ApiLogs.Arn
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${AudioBucket}/recordings/*/source'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResultTable}'
+                Condition:
+                  ForAllValues:StringLike: {'dynamodb:LeadingKeys': ['REC#*']}
+  PublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}
+      ManagedPolicyArns: [!Ref DatabaseAccess]
+      Policies:
+        - PolicyName: PublisherSendOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt PublisherLogs.Arn
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt Queue.Arn
+  WorkerApi:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-worker-api'
+      Runtime: python3.12
+      Handler: umsal_backend.worker_api.handler
+      Role: !GetAtt WorkerApiRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ApiArtifactKey}
+      MemorySize: 256
+      Timeout: 25
+      ReservedConcurrentExecutions: 2
+      LoggingConfig: {LogGroup: !Ref ApiLogs}
+      VpcConfig: {SubnetIds: [!Ref SubnetId], SecurityGroupIds: [!Ref ApiSecurityGroup]}
+      Environment:
+        Variables:
+          DB_HOST: !Ref DbHost
+          DB_USER: umsal_app
+          DB_NAME: umsal
+          DB_CONNECT_TIMEOUT: '8'
+          AUDIO_BUCKET: !Ref AudioBucket
+          DYNAMODB_TABLE: !Ref ResultTable
+  Publisher:
+    Type: AWS::Lambda::Function
+    DependsOn: SqsEndpoint
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-publisher'
+      Runtime: python3.12
+      Handler: umsal_backend.worker_api.publisher_handler
+      Role: !GetAtt PublisherRole.Arn
+      Code: {S3Bucket: !Ref ArtifactBucket, S3Key: !Ref ApiArtifactKey}
+      MemorySize: 256
+      Timeout: 30
+      ReservedConcurrentExecutions: 1
+      LoggingConfig: {LogGroup: !Ref PublisherLogs}
+      VpcConfig: {SubnetIds: [!Ref SubnetId], SecurityGroupIds: [!Ref ApiSecurityGroup]}
+      Environment:
+        Variables:
+          DB_HOST: !Ref DbHost
+          DB_USER: umsal_app
+          DB_NAME: umsal
+          DB_CONNECT_TIMEOUT: '8'
+          UMSAL_QUEUE_URL: !Ref Queue
+  PublisherScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition: {StringEquals: {'aws:SourceAccount': !Ref 'AWS::AccountId'}}
+      Policies:
+        - PolicyName: InvokePublisher
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - {Effect: Allow, Action: 'lambda:InvokeFunction', Resource: !GetAtt Publisher.Arn}
+  PublisherSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow: {Mode: 'OFF'}
+      Target:
+        Arn: !GetAtt Publisher.Arn
+        RoleArn: !GetAtt PublisherScheduleRole.Arn
+        RetryPolicy: {MaximumEventAgeInSeconds: 60, MaximumRetryAttempts: 0}
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        must: [No database access, No broad audio permissions]
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - {Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: 'sts:AssumeRole'}
+      Policies:
+        - PolicyName: WorkerBundleAndJobOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ArtifactBucket}/${WorkerArtifactKey}'
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:ChangeMessageVisibility]
+                Resource: !GetAtt Queue.Arn
+              - {Effect: Allow, Action: 'lambda:InvokeFunction', Resource: !GetAtt WorkerApi.Arn}
+  WorkerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref WorkerRole]
+Outputs:
+  QueueUrl: {Value: !Ref Queue}
+  WorkerApi: {Value: !Ref WorkerApi}
+  Publisher: {Value: !Ref Publisher}
+  WorkerSecurityGroup: {Value: !Ref WorkerSg}
+  InstanceProfile: {Value: !Ref WorkerProfile}

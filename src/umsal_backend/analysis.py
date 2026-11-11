@@ -30,6 +30,7 @@ from psycopg.types.json import Jsonb
 from umsal_backend.results import ResultStore
 
 PIPELINE_VERSION = "stub-1"
+CPU_PIPELINE_VERSION = "cpu-1"
 LEASE = timedelta(minutes=2)
 STALE_QUEUED = timedelta(seconds=30)
 MAX_ATTEMPTS = 3
@@ -74,14 +75,14 @@ class TextResult:
     limitations: list[str]
     demo: bool
 
-    def body(self) -> dict[str, Any]:
+    def body(self, pipeline_version: str = PIPELINE_VERSION) -> dict[str, Any]:
         return {
             "status": self.status,
             "summary": self.summary,
             "observations": self.observations,
             "limitations": self.limitations,
             "demo": self.demo,
-            "pipeline_version": PIPELINE_VERSION,
+            "pipeline_version": pipeline_version,
         }
 
 
@@ -133,14 +134,19 @@ def _log(event: str, **fields: object) -> None:
 
 
 def enqueue(
-    db: psycopg.Connection, recording_id: str, stage: str, assignment_version: int = 0
+    db: psycopg.Connection,
+    recording_id: str,
+    stage: str,
+    assignment_version: int = 0,
+    *,
+    pipeline_version: str = PIPELINE_VERSION,
 ) -> str:
     """Add a QUEUED job and point the recording at it (caller holds the row lock)."""
     queued = STAGE_STATUS[stage][0]
     job_id = db.execute(
         "INSERT INTO analysis_jobs (recording_id, stage, pipeline_version, assignment_version) "
         "VALUES (%s, %s, %s, %s) RETURNING id",
-        (recording_id, stage, PIPELINE_VERSION, assignment_version),
+        (recording_id, stage, pipeline_version, assignment_version),
     ).fetchone()[0]
     db.execute(
         "UPDATE recordings SET current_job_id = %s, status = %s, updated_at = now() WHERE id = %s",
@@ -163,9 +169,10 @@ def claim(db: psycopg.Connection, job_id: str) -> Claim | None:
     exhausted = db.execute(
         "UPDATE analysis_jobs SET status = 'FAILED', failure_code = 'ATTEMPTS_EXHAUSTED', "
         "lease_expires_at = NULL, updated_at = now() "
-        "WHERE id = %s AND status = 'RUNNING' AND lease_expires_at < now() AND attempt >= %s "
+        "WHERE id = %s AND pipeline_version = %s AND status = 'RUNNING' "
+        "AND lease_expires_at < now() AND attempt >= %s "
         "RETURNING stage",
-        (job_id, MAX_ATTEMPTS),
+        (job_id, PIPELINE_VERSION, MAX_ATTEMPTS),
     ).fetchone()
     if exhausted is not None:
         queued, processing, _ = STAGE_STATUS[exhausted[0]]
@@ -180,11 +187,11 @@ def claim(db: psycopg.Connection, job_id: str) -> Claim | None:
         UPDATE analysis_jobs
         SET status = 'RUNNING', attempt = attempt + 1, lease_expires_at = now() + %s,
             updated_at = now()
-        WHERE id = %s
+        WHERE id = %s AND pipeline_version = %s
           AND (status = 'QUEUED' OR (status = 'RUNNING' AND lease_expires_at < now()))
         RETURNING recording_id, stage, assignment_version, attempt
         """,
-        (LEASE, job_id),
+        (LEASE, job_id, PIPELINE_VERSION),
     ).fetchone()
     if row is None:
         return None
@@ -247,9 +254,9 @@ def complete_text(
     if row is None or not row[0] or row[1] != claimed.assignment_version:
         _finish_job(db, claimed, "CANCELLED", None)
         return
-    results.put(claimed.recording_id, claimed.assignment_version, result.body())
     if not _finish_job(db, claimed, "SUCCEEDED", None):
         return
+    results.put(claimed.recording_id, claimed.assignment_version, result.body())
     db.execute(
         "UPDATE recordings SET status = 'COMPLETED', updated_at = now() "
         "WHERE id = %s AND status = 'PROCESSING_TEXT'",
@@ -354,8 +361,9 @@ def redrain_if_stale(
         return False
     row = db.execute(
         "SELECT (status = 'QUEUED' AND updated_at < now() - %s) "
-        "OR (status = 'RUNNING' AND lease_expires_at < now()) FROM analysis_jobs WHERE id = %s",
-        (STALE_QUEUED, job_id),
+        "OR (status = 'RUNNING' AND lease_expires_at < now()) FROM analysis_jobs "
+        "WHERE id = %s AND pipeline_version = %s",
+        (STALE_QUEUED, job_id, PIPELINE_VERSION),
     ).fetchone()
     if not row or not row[0]:
         return False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 import psycopg
 import pytest
@@ -1068,3 +1069,99 @@ def test_reissued_url_and_finalize_use_the_persisted_source_key(
         assert connection.execute(
             "SELECT s3_key, s3_version_id FROM recordings WHERE id = %s", (ticket["recording_id"],)
         ).fetchone() == (key, "v1")
+
+
+def _cpu_job(client, consented, audio, monkeypatch):
+    pair = [_user_id(client, subject) for subject in ("alice", "bob")]
+    monkeypatch.setenv("UMSAL_CPU_PILOT_USERS", ",".join(pair))
+    ticket = _upload(client, consented, demo=True).json()
+    audio.put(_source_key(client, ticket["recording_id"]), "v1")
+    finalized = _finalize(client, ticket["upload_id"])
+    assert finalized.status_code == 202
+    return ticket["recording_id"], finalized.json()["resource_id"]
+
+
+def test_cpu_outbox_claim_confirm_commit_and_revoke(
+    client, consented, audio, results, migrated_db, monkeypatch, contract_schema
+):
+    from types import SimpleNamespace
+
+    from umsal_backend.worker_api import dispatch, operate
+
+    rec, audio_job = _cpu_job(client, consented, audio, monkeypatch)
+    assert (
+        client.get(f"/api/recordings/{rec}", headers=_h("alice")).json()["status"] == "QUEUED_AUDIO"
+    )
+    sent = []
+    sqs = SimpleNamespace(send_message=lambda **args: sent.append(args))
+    signing = SimpleNamespace(
+        bucket="synthetic-bucket",
+        client=SimpleNamespace(generate_presigned_url=lambda *args, **kw: "https://audio.test/one"),
+    )
+
+    def worker(job, operation, **fields):
+        with psycopg.connect(migrated_db) as db:
+            return operate(db, {"operation": operation, "job_id": job, **fields}, signing, results)
+
+    with psycopg.connect(migrated_db) as db:
+        assert dispatch(db, sqs, "test-queue") == 1
+        assert dispatch(db, sqs, "test-queue") == 0
+    assert json.loads(sent[0]["MessageBody"]) == {"job_id": audio_job}
+    claim = worker(audio_job, "claim")
+    assert claim["state"] == "claimed" and claim["stage"] == "AUDIO_PREP"
+    assert worker(audio_job, "claim") == {"state": "busy"}
+    intervals = [
+        {"speaker_id": "spk_1", "start_ms": 100, "end_ms": 1200},
+        {"speaker_id": "spk_2", "start_ms": 1300, "end_ms": 2200},
+    ]
+    assert worker(audio_job, "complete", attempt=0, output=intervals) == {"state": "stale"}
+    assert worker(audio_job, "complete", attempt=1, output=intervals) == {"state": "terminal"}
+    bob = client.get(f"/api/recordings/{rec}", headers=_h("bob")).json()
+    assert "speaker_intervals" not in bob
+    assert _result(client, rec, "alice").status_code == 409
+    text_job = _assign(client, rec, target_sub="alice", speaker="spk_1").json()["resource_id"]
+    claim = worker(text_job, "claim")
+    assert claim["speaker_id"] == "spk_1" and claim["stage"] == "TEXT_ANALYSIS"
+    output = {"category": "WORRY", "text": "합성 근거", "start_ms": 100, "end_ms": 1200}
+    wrong = {**output, "start_ms": 1300, "end_ms": 2200}
+    with pytest.raises(ValueError, match="confirmed speaker"):
+        worker(text_job, "complete", attempt=1, output=wrong)
+    assert worker(text_job, "complete", attempt=1, output=output) == {"state": "terminal"}
+    assert worker(text_job, "complete", attempt=1, output=wrong) == {"state": "terminal"}
+    result = _result(client, rec, "alice").json()
+    assert result["pipeline_version"] == "cpu-1"
+    assert result["observations"][0]["evidence"][0]["text"] == "합성 근거"
+    contract_schema("ResultView").validate(result)
+    _consent(client, consented, "bob", False)
+    _assert_error(_result(client, rec, "alice"), 403, "CONSENT_REQUIRED")
+    _consent(client, consented, "bob", True)
+    _assert_error(_result(client, rec, "alice"), 403, "CONSENT_REQUIRED")
+
+
+def test_cpu_revoke_after_claim_has_durable_cancel_and_no_payload(
+    client, consented, audio, results, migrated_db, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from umsal_backend.worker_api import operate
+
+    rec, job = _cpu_job(client, consented, audio, monkeypatch)
+    signing = SimpleNamespace(
+        bucket="synthetic-bucket",
+        client=SimpleNamespace(generate_presigned_url=lambda *args, **kw: "https://audio.test/one"),
+    )
+    with psycopg.connect(migrated_db) as db:
+        assert operate(db, {"operation": "claim", "job_id": job}, signing, results)["attempt"] == 1
+    _consent(client, consented, "bob", False)
+    with psycopg.connect(migrated_db) as db:
+        assert operate(
+            db, {"operation": "complete", "job_id": job, "attempt": 1}, signing, results
+        ) == {"state": "terminal"}
+        assert operate(
+            db, {"operation": "claim", "job_id": "job_" + "0" * 32}, signing, results
+        ) == {"state": "unknown"}
+        assert db.execute("SELECT status FROM analysis_jobs WHERE id=%s", (job,)).fetchone() == (
+            "CANCELLED",
+        )
+    assert client.get(f"/api/recordings/{rec}", headers=_h("alice")).json()["status"] == "CANCELLED"
+    assert not results.items

@@ -2679,6 +2679,9 @@ components:
           items:
             type: string
         demo: *id005
+        pipeline_version:
+          type: string
+          description: CPU 시연 결과의 처리 버전
       required:
       - recording_id
       - status

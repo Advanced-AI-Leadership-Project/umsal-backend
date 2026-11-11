@@ -24,7 +24,7 @@ import psycopg
 from fastapi import APIRouter, Path, Request
 from pydantic import BaseModel, Field, model_validator
 
-from umsal_backend import analysis
+from umsal_backend import analysis, pilot
 from umsal_backend.connections import ID_PATTERN
 from umsal_backend.db import Db
 from umsal_backend.errors import ApiError, new_request_id
@@ -92,6 +92,7 @@ class ResultView(BaseModel):
     observations: list[Observation] | None = None
     limitations: list[str]
     demo: bool
+    pipeline_version: str | None = None
 
 
 @router.put(
@@ -108,7 +109,7 @@ def assign_speaker(
     body: SpeakerAssignment,
     recording_id: RecordingId,
 ):
-    queued: list[str] = []
+    queued: list[tuple[str, bool]] = []
 
     def handler() -> tuple[int, Any]:
         row = db.execute(
@@ -147,6 +148,11 @@ def assign_speaker(
             )
         # Lock order recording -> connection, as in finalize (design 6).
         _require_upload_allowed(db, connection_id, user.user_id)
+        snapshot = pilot.audio_snapshot(db, recording_id)
+        if snapshot is not None and snapshot != pilot.grant_versions(db, connection_id):
+            raise ApiError(
+                403, "CONSENT_REQUIRED", "Analysis consent changed after audio processing."
+            )
         new_version = version + 1
         db.execute(
             "UPDATE recordings SET speaker_assignment_version = %s, updated_at = now() "
@@ -167,8 +173,12 @@ def assign_speaker(
             ),
         )
         if confirmed:
-            job_id = analysis.enqueue(db, recording_id, "TEXT_ANALYSIS", new_version)
-            queued.append(job_id)
+            job_id = (
+                pilot.enqueue(db, recording_id, "TEXT_ANALYSIS", snapshot, new_version)
+                if snapshot
+                else analysis.enqueue(db, recording_id, "TEXT_ANALYSIS", new_version)
+            )
+            queued.append((job_id, snapshot is not None))
             resource_id = job_id
         else:
             db.execute(
@@ -191,7 +201,9 @@ def assign_speaker(
     )
     if queued:  # not on a replay: the first request already ran the job
         db.commit()  # transaction 1: assignment version, TEXT job QUEUED, response
-        analysis.drain_safely(db, queued[0], _analyzer(request), _results(request))
+        job_id, use_worker = queued[0]
+        if not use_worker:
+            analysis.drain_safely(db, job_id, _analyzer(request), _results(request))
     return response
 
 
@@ -248,7 +260,7 @@ def _load(db: psycopg.Connection, recording_id: str, user_id: str) -> tuple:
     row = db.execute(
         "SELECT connection_id, status, speaker_assignment_version, current_job_id "
         "FROM recordings WHERE id = %(id)s AND deleted_at IS NULL "
-        "AND (participant_a_id = %(me)s OR participant_b_id = %(me)s)",
+        "AND (participant_a_id = %(me)s OR participant_b_id = %(me)s) FOR SHARE",
         {"id": recording_id, "me": user_id},
     ).fetchone()
     if row is None:
@@ -280,6 +292,9 @@ def get_result(
     if found is None:
         raise _not_ready(status)
     subject = found[0]
+    snapshot = pilot.audio_snapshot(db, recording_id)
+    if snapshot is not None and snapshot != pilot.grant_versions(db, connection_id):
+        raise ApiError(403, "CONSENT_REQUIRED", "Analysis consent changed after audio processing.")
     scopes = _visible_scopes(db, connection_id, subject, user.user_id)
     if status == "ABSTAINED":
         return ResultView(
@@ -308,6 +323,11 @@ def get_result(
             scope=scopes,
             limitations=list(body["limitations"]),
             demo=bool(body.get("demo", True)),
+            **(
+                {"pipeline_version": analysis.CPU_PIPELINE_VERSION}
+                if body.get("pipeline_version") == analysis.CPU_PIPELINE_VERSION
+                else {}
+            ),
             **_filtered(body, scopes),
         )
     except (KeyError, TypeError, ValueError) as error:  # ValidationError is a ValueError

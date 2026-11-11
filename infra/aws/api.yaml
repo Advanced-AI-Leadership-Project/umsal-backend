@@ -22,6 +22,11 @@ Metadata:
       - No secrets in parameters, environment variables or logs (JWKS are public keys)
       - Leaving every stage-2 parameter empty must keep the stage-1 deployment unchanged
 Parameters:
+  CpuPilotUsers:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^usr_[a-f0-9]{32},usr_[a-f0-9]{32}$'
+    Description: Two internal synthetic test user IDs; empty disables new CPU jobs
   ArtifactBucket:
     Type: String
     Description: Bucket name output by the umsal-backend-bootstrap stack
@@ -243,6 +248,7 @@ Resources:
       Environment:
         Variables:
           UMSAL_ENV: !Ref Environment
+          UMSAL_CPU_PILOT_USERS: !Ref CpuPilotUsers
           DB_HOST: !If [UseDatabase, !Ref DbHost, !Ref AWS::NoValue]
           DB_USER: !If [UseDatabase, !Ref DbUser, !Ref AWS::NoValue]
           DB_NAME: !If [UseDatabase, umsal, !Ref AWS::NoValue]
