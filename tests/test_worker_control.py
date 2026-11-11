@@ -197,3 +197,30 @@ def test_worker_does_not_report_idle_after_sqs_errors(worker, monkeypatch):
     )
     worker.run(SimpleNamespace(receive_message=fail), SimpleNamespace(), args, object(), INSTANCE)
     assert now[0] == 20
+
+
+@pytest.mark.parametrize("state", ["running", "stale"])
+def test_native_inference_heartbeat_keeps_or_loses_lease(worker, monkeypatch, state):
+    waiting = iter([False, True])
+    lost = []
+    visibility = []
+    clients = {
+        "lambda": SimpleNamespace(
+            invoke=lambda **kwargs: {"Payload": io.BytesIO(json.dumps({"state": state}).encode())}
+        ),
+        "sqs": SimpleNamespace(
+            change_message_visibility=lambda **kwargs: visibility.append(kwargs)
+        ),
+    }
+    monkeypatch.setattr(worker.boto3, "client", lambda service, **kw: clients[service])
+    worker.keep_lease(
+        "queue",
+        "api",
+        "job",
+        1,
+        "receipt",
+        SimpleNamespace(wait=lambda seconds: next(waiting)),
+        SimpleNamespace(set=lambda: lost.append(True)),
+    )
+    assert bool(visibility) == (state == "running")
+    assert bool(lost) == (state == "stale")

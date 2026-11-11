@@ -3,8 +3,8 @@
 import argparse
 import hashlib
 import json
+import multiprocessing
 import tempfile
-import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -39,6 +39,27 @@ def download(claim, host, path):
     path.write_bytes(data)
 
 
+def keep_lease(queue_url, worker_api, job_id, attempt, receipt, stop, lost):
+    """Native model inference may hold the parent GIL; keep the lease independently."""
+    config = Config(connect_timeout=4, read_timeout=30, retries={"total_max_attempts": 2})
+    sqs = boto3.client("sqs", config=config)
+    service = boto3.client("lambda", config=config)
+    while not stop.wait(30):
+        try:
+            if (
+                invoke(service, worker_api, "heartbeat", job_id, attempt=attempt)["state"]
+                != "running"
+            ):
+                lost.set()
+                return
+            sqs.change_message_visibility(
+                QueueUrl=queue_url, ReceiptHandle=receipt, VisibilityTimeout=150
+            )
+        except Exception:
+            lost.set()
+            return
+
+
 def process(sqs, service, config, message, models):
     job_id = json.loads(message["Body"])["job_id"]
     receipt = message["ReceiptHandle"]
@@ -51,24 +72,15 @@ def process(sqs, service, config, message, models):
     if state != "claimed":
         return False
     attempt = claim["attempt"]
-    stop = threading.Event()
-    lost = threading.Event()
-
-    def heartbeat():
-        while not stop.wait(30):
-            try:
-                if invoke(*args, "heartbeat", job_id, attempt=attempt)["state"] != "running":
-                    lost.set()
-                    return
-                sqs.change_message_visibility(
-                    QueueUrl=config.queue_url, ReceiptHandle=receipt, VisibilityTimeout=150
-                )
-            except Exception:
-                lost.set()
-                return
-
-    thread = threading.Thread(target=heartbeat, daemon=True)
-    thread.start()
+    context = multiprocessing.get_context("spawn")
+    stop = context.Event()
+    lost = context.Event()
+    heartbeat = context.Process(
+        target=keep_lease,
+        args=(config.queue_url, config.worker_api, job_id, attempt, receipt, stop, lost),
+        daemon=True,
+    )
+    heartbeat.start()
     started = time.monotonic()
     try:
         with tempfile.TemporaryDirectory(prefix="umsal-cpu-") as folder:
@@ -100,7 +112,10 @@ def process(sqs, service, config, message, models):
             )["state"]
     finally:
         stop.set()
-        thread.join()
+        heartbeat.join(timeout=40)
+        if heartbeat.is_alive():
+            heartbeat.terminate()
+            heartbeat.join()
     if state == "terminal":
         sqs.delete_message(QueueUrl=config.queue_url, ReceiptHandle=receipt)
         print(
