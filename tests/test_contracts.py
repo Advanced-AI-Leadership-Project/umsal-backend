@@ -35,6 +35,9 @@ EXAMPLE_SCHEMAS = {
     "consent-update.json": "ConsentUpdate",
     "speaker-confirmation.json": "SpeakerAssignment",
     "worker-terminal-disposition.json": "TerminalDisposition",
+    "upload-recording.json": "UploadRequest",
+    "upload-finalize-recording.json": "FinalizeRequest",
+    "recording-analysis-unavailable.json": "Error",
 }
 
 
@@ -138,6 +141,15 @@ def test_version_and_server_prefix(contract):
     assert spec["servers"] == [{"url": "/api", "description": spec["servers"][0]["description"]}]
 
 
+def test_recording_gate_is_documented_for_ticket_and_finalize(contract):
+    for path in ("/uploads", "/uploads/{id}/finalize"):
+        operation = contract["spec"]["paths"][path]["post"]
+        assert "CpuRealAudioEnabled=true" in operation["description"]
+        assert "503 TEMPORARILY_UNAVAILABLE" in operation["description"]
+        assert "503" in operation["responses"]
+    assert contract["examples"]["upload-recording.json"]["demo"] is False
+
+
 def test_operations_have_expected_auth_and_unique_ids(contract):
     operations = list(_operations(contract["spec"]))
     for path, method, operation in operations:
@@ -164,9 +176,14 @@ def test_schemas_are_valid_json_schema(contract):
 
 def test_examples_validate(contract):
     examples = contract["examples"]
-    assert len(examples) == 11, "Expected the 11 reviewed contract examples"
+    assert len(examples) == 14, "Expected the 14 reviewed contract examples"
     for filename, example in examples.items():
-        assert example.get("demo") is True, f"Missing demo flag: {filename}"
+        if filename not in {
+            "upload-recording.json",
+            "upload-finalize-recording.json",
+            "recording-analysis-unavailable.json",
+        }:
+            assert example.get("demo") is True, f"Missing demo flag: {filename}"
         if filename.startswith("analysis-"):
             contract["analysis_validator"].validate(example)
         else:

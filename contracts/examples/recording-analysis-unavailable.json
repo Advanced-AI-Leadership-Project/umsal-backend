@@ -1,0 +1,6 @@
+{
+  "code": "TEMPORARILY_UNAVAILABLE",
+  "message": "Recording analysis is not enabled.",
+  "request_id": "req_example",
+  "retryable": false
+}

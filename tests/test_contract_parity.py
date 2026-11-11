@@ -20,6 +20,7 @@ import pytest
 import yaml
 
 from umsal_backend.app import create_app
+from umsal_backend.recordings import FinalizeRequest, UploadRequest
 
 CONTRACT = Path(__file__).resolve().parents[1] / "contracts" / "openapi.yaml"
 METHODS = {"get", "post", "put", "patch", "delete"}
@@ -74,6 +75,19 @@ def test_implemented_operations_match_contract_shape(app_ops, contract_ops):
         if app_ops[operation_id] != contract_ops.get(operation_id)
     }
     assert not mismatches, mismatches
+
+
+def test_real_recording_examples_match_running_request_models():
+    import json
+
+    examples = CONTRACT.parent / "examples"
+    upload = UploadRequest.model_validate_json((examples / "upload-recording.json").read_text())
+    assert upload.demo is False
+    # Omitting the optional flag has the same real-recording meaning at the gate.
+    omitted = json.loads((examples / "upload-recording.json").read_text())
+    del omitted["demo"]
+    assert UploadRequest.model_validate(omitted).demo is None
+    FinalizeRequest.model_validate_json((examples / "upload-finalize-recording.json").read_text())
 
 
 def test_implemented_set_is_tracked(app_ops, contract_ops):
