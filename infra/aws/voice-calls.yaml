@@ -117,8 +117,7 @@ Resources:
       ManagedPolicyArns:
       - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
-      - &id001
-        PolicyName: ReadRelaySecret
+      - PolicyName: ReadRelaySecret
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
@@ -266,7 +265,14 @@ Resources:
               aws:SourceAccount:
                 Ref: AWS::AccountId
       Policies:
-      - *id001
+      - PolicyName: ReadRelaySecret
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource:
+              Ref: Secret
       - PolicyName: OwnLogs
         PolicyDocument:
           Version: '2012-10-17'
