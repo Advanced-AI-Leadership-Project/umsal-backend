@@ -13,3 +13,11 @@
 배포 순서는 API/마이그레이션 아티팩트 게시 → 통화 스택 생성 → CPU 스택의 선택 `CallRelayFunctionArn` 연결 → RDS 0009 적용 → API 스택의 `CallRelayFunctionArn`, `CallSignalsTableName`, `CallLambdaEndpoint` 연결이다. 자격 발급 함수의 공개 URL은 만들지 않는다. AWS 검증 전에는 로컬 검사 통과를 실제 단말 통화 성공으로 보고하지 않는다.
 
 지원 범위는 전경 PWA다. 화면 잠금·앱 종료·백그라운드 수신 및 일반 전화번호 발신은 이 기능에 포함되지 않는다. 양쪽 마이크 권한과 실제 네트워크 간 연결은 별도 단말 확인이 필요하다.
+
+## 릴레이 실행 버전 (#92)
+
+Ubuntu 24.04 기본 coturn 4.6.1 대신 [공식 Docker 릴리스 4.18.0-r0](https://github.com/coturn/coturn/releases/tag/docker/4.18.0-r0)의 linux/amd64 이미지 `sha256:59af4221a2c45c1195a1a4a865542b3ea744be1dd8e228d11bde87c6631081cf`로 고정한다. 기본 패키지는 비활성화하고 `umsal-turn.service`가 고정 컨테이너를 실행한다. 비root UID·NET_BIND_SERVICE만 허용·새 권한 금지·읽기 전용 루트·설정 파일 읽기 전용·8MiB 임시 디렉터리를 적용한다. EC2 부팅·재시작 후 systemd가 복구한다. 기존 인스턴스는 같은 UserData 셸을 SSM으로 적용한 뒤 CloudFormation 구성도 맞춘다.
+
+자격 발급 Lambda는 SDK 초기화와 Secrets Manager 호출을 제한 시간 안에 처리하도록 512MiB를 할당한다. 실행 제한 8초·동시성 2는 유지한다.
+
+공식 이미지 실행 파일이 NET_BIND_SERVICE file capability를 가지므로 이 capability를 bounding set에 남긴다. 이외 capability는 모두 제거하며 no-new-privileges를 유지한다.
