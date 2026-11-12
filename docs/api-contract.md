@@ -8,7 +8,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.4.0, 27 paths / 32 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7), 연결별 호칭 `PUT /connections/{id}/label`(D10, 0.4.0) 추가. 정적 검사는 `tests/test_contracts.py` |
+| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.5.0, 33 paths / 41 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7), 연결별 호칭 `PUT /connections/{id}/label`(D10, 0.4.0) 추가. 정적 검사는 `tests/test_contracts.py` |
 | 이관 전 원안 | umsal-pwa [`contracts/openapi.yaml`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/contracts/openapi.yaml) v0.2.0, 23 paths / 28 operations |
 | 설계 설명 | umsal-pwa [`docs/design/09_API_계약_및_데이터설계.md`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/docs/design/09_API_%EA%B3%84%EC%95%BD_%EB%B0%8F_%EB%8D%B0%EC%9D%B4%ED%84%B0%EC%84%A4%EA%B3%84.md) (2026-10-27 Android 원안) |
 | 고정 commit | `e54088b9489d67ab3269cb626c860d3b0a4bf79e` (umsal-pwa main, 2026-11-04 조회) |
@@ -110,3 +110,7 @@ umsal-pwa #20의 "OpenAPI·JSON 예시·의미 검사·프런트 타입의 변�
 1. D1·D2·D3·D5·D6·D7·D9는 확정했다(D2·D3 검증은 구현, D5·D6은 SPEC "저장 계층", D9는 AGENTS 제품 불변조건에 반영). D4는 umsal-pwa #52, D8은 #17 결정 뒤 정한다.
 2. 계약을 이 저장소 `contracts/`로 옮기고 D2·D3·D7을 반영했다(#25). umsal-pwa 쪽 사본 정리(삭제·참조 전환·프런트 타입 생성)는 PWA 팀이 정한다.
 3. umsal-pwa #17의 발표 범위로 1차 operation(D8)을 정한 뒤 DB 스키마(umsal-pwa #23)와 인증(#24)을 시작한다.
+
+## D13 가족 음성 통화
+
+#89에서 전경 WebRTC 1:1 통화 operation 9개와 요청/응답 예시 2개를 계약 v0.5.0에 추가했다. 기존 operation과 오류 구조를 유지한다. `createCall`만 Idempotency-Key 필수, accept/heartbeat/PUT signal/DELETE 종료는 같은 상태에 대한 재요청을 허용한다. 다른 세션은 CALL_OTHER_DEVICE, 종료는 CALL_ENDED, 중복은 CALL_BUSY다. 프런트엔드 #139가 이 계약을 연결한다. 자세한 저장·만료 정책은 [통화 설명서](voice-calls.md)를 따른다.

@@ -1,0 +1,326 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'UMSAL foreground WebRTC calls: isolated authenticated TURN relay and expiring SDP.'
+Metadata:
+  com.aws.cloudformation.Context:
+    must:
+    - Sydney only; no GitHub billing changes
+    - TURN remains running to receive calls; charged to AWS credits
+    - No SSH, static credentials, captured audio or public credential endpoint
+Parameters:
+  ArtifactBucket:
+    Type: String
+  ArtifactKey:
+    Type: String
+    AllowedPattern: ^lambda/[0-9a-f]{40}\.zip$
+  UbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.78.0.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Project
+        Value: umsal-calls
+  Gateway:
+    Type: AWS::EC2::InternetGateway
+    Properties: {}
+  Attach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: Vpc
+      InternetGatewayId:
+        Ref: Gateway
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.78.0.0/24
+      MapPublicIpOnLaunch: true
+  Routes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+  Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: Routes
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: Gateway
+    DependsOn: Attach
+  RouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: Routes
+      SubnetId:
+        Ref: Subnet
+  RelayAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+      - Key: Project
+        Value: umsal-calls
+    DependsOn: Attach
+  RelaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: Vpc
+      GroupDescription: Authenticated WebRTC TURN only; no SSH
+      SecurityGroupIngress:
+      - IpProtocol: udp
+        FromPort: 3478
+        ToPort: 3478
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 3478
+        ToPort: 3478
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: udp
+        FromPort: 49152
+        ToPort: 49200
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: '-1'
+        CidrIp: 0.0.0.0/0
+  Secret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: UMSAL TURN REST shared secret
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
+  RelayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+      ManagedPolicyArns:
+      - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+      - &id001
+        PolicyName: ReadRelaySecret
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource:
+              Ref: Secret
+  RelayProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+      - Ref: RelayRole
+  Relay:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId:
+        Ref: UbuntuAmi
+      InstanceType: t3.micro
+      SubnetId:
+        Ref: Subnet
+      SecurityGroupIds:
+      - Ref: RelaySecurityGroup
+      IamInstanceProfile:
+        Ref: RelayProfile
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+        HttpEndpoint: enabled
+      CreditSpecification:
+        CPUCredits: standard
+      BlockDeviceMappings:
+      - DeviceName: /dev/sda1
+        Ebs:
+          Encrypted: true
+          VolumeType: gp3
+          VolumeSize: 8
+          DeleteOnTermination: true
+      UserData:
+        Fn::Base64:
+          Fn::Sub: '#!/bin/bash
+
+            set -euo pipefail
+
+            export DEBIAN_FRONTEND=noninteractive
+
+            # Do not expose an unauthenticated default service during package installation.
+
+            printf ''#!/bin/sh\nexit 101\n'' > /usr/sbin/policy-rc.d
+
+            chmod 755 /usr/sbin/policy-rc.d
+
+            for attempt in $(seq 1 12); do apt-get update -qq && apt-get install -y -qq coturn python3-boto3
+            && break; sleep 10; done
+
+            rm -f /usr/sbin/policy-rc.d
+
+            /usr/bin/python3 - <<''CONFIG''
+
+            import boto3, urllib.request, os, grp
+
+            secret=boto3.client(''secretsmanager'',region_name=''${AWS::Region}'').get_secret_value(SecretId=''${Secret}'')[''SecretString'']
+
+            token=urllib.request.urlopen(urllib.request.Request(''http://169.254.169.254/latest/api/token'',method=''PUT'',headers={''X-aws-ec2-metadata-token-ttl-seconds'':''60''})).read().decode()
+
+            private=urllib.request.urlopen(urllib.request.Request(''http://169.254.169.254/latest/meta-data/local-ipv4'',headers={''X-aws-ec2-metadata-token'':token})).read().decode()
+
+            config=''listening-port=3478\nlistening-ip=0.0.0.0\nrelay-ip={private}\nexternal-ip=${RelayAddress}/{private}\nmin-port=49152\nmax-port=49200\nuse-auth-secret\nstatic-auth-secret={secret}\nrealm=umsal\nfingerprint\nno-cli\nno-tls\nno-dtls\nno-tcp-relay\nno-multicast-peers\nno-stdout-log\nlog-file=/dev/null\nuser-quota=4\ntotal-quota=80\nmax-bps=64000\nstale-nonce=600\ndenied-peer-ip=0.0.0.0-0.255.255.255\ndenied-peer-ip=10.0.0.0-10.255.255.255\ndenied-peer-ip=100.64.0.0-100.127.255.255\ndenied-peer-ip=127.0.0.0-127.255.255.255\ndenied-peer-ip=169.254.0.0-169.254.255.255\ndenied-peer-ip=172.16.0.0-172.31.255.255\ndenied-peer-ip=192.168.0.0-192.168.255.255\ndenied-peer-ip=224.0.0.0-255.255.255.255\ndenied-peer-ip=::1\ndenied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff\ndenied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff\n''.format(private=private,secret=secret)
+
+            path=''/etc/turnserver.conf''
+
+            with open(path,''w'') as f: f.write(config)
+
+            os.chmod(path,0o640)
+
+            os.chown(path,0,grp.getgrnam(''turnserver'').gr_gid)
+
+            CONFIG
+
+            systemctl enable coturn
+
+            systemctl restart coturn
+
+            systemctl is-active --quiet coturn
+
+            touch /var/lib/umsal-turn-ready
+
+            '
+      Tags:
+      - Key: Project
+        Value: umsal-calls
+      - Key: Name
+        Value: umsal-family-turn
+    DependsOn:
+    - Route
+    - RouteAssociation
+  RelayAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId:
+        Ref: Relay
+      AllocationId:
+        Fn::GetAtt:
+        - RelayAddress
+        - AllocationId
+  Signals:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: pk
+        AttributeType: S
+      - AttributeName: sk
+        AttributeType: S
+      KeySchema:
+      - AttributeName: pk
+        KeyType: HASH
+      - AttributeName: sk
+        KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+      - Key: Project
+        Value: umsal-calls
+  RelayLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${AWS::StackName}-credentials
+      RetentionInDays: 7
+  CredentialRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+      Policies:
+      - *id001
+      - PolicyName: OwnLogs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+              Fn::GetAtt:
+              - RelayLogs
+              - Arn
+  Credentials:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-credentials
+      Runtime: python3.12
+      Architectures:
+      - x86_64
+      Handler: umsal_backend.turn_relay.handler
+      MemorySize: 128
+      Timeout: 8
+      ReservedConcurrentExecutions: 2
+      Role:
+        Fn::GetAtt:
+        - CredentialRole
+        - Arn
+      Code:
+        S3Bucket:
+          Ref: ArtifactBucket
+        S3Key:
+          Ref: ArtifactKey
+      Environment:
+        Variables:
+          TURN_SECRET_ARN:
+            Ref: Secret
+          TURN_ADDRESS:
+            Ref: RelayAddress
+      LoggingConfig:
+        LogGroup:
+          Ref: RelayLogs
+Outputs:
+  RelayAddress:
+    Value:
+      Ref: RelayAddress
+  RelayInstanceId:
+    Value:
+      Ref: Relay
+  CredentialFunctionArn:
+    Value:
+      Fn::GetAtt:
+      - Credentials
+      - Arn
+  SignalsTableName:
+    Value:
+      Ref: Signals

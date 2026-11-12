@@ -94,6 +94,15 @@ def test_implemented_set_is_tracked(app_ops, contract_ops):
     # Update this list when an operation is implemented, so the progress is explicit.
     assert sorted(app_ops) == sorted(
         [
+            "createCall",
+            "getCurrentCall",
+            "getCall",
+            "endCall",
+            "acceptCall",
+            "heartbeatCall",
+            "putCallSignal",
+            "getCallSignal",
+            "getCallIceServers",
             "acceptInvitation",
             "assignSpeaker",
             "createInvitation",
@@ -114,4 +123,12 @@ def test_implemented_set_is_tracked(app_ops, contract_ops):
             "updateConsents",
         ]
     )
-    assert len(contract_ops) == 32
+    assert len(contract_ops) == 41
+
+
+def test_call_examples_match_running_models():
+    from umsal_backend.calls import CreateCall, VoiceCall
+
+    examples = CONTRACT.parent / "examples"
+    CreateCall.model_validate_json((examples / "call-create.json").read_text())
+    VoiceCall.model_validate_json((examples / "call-view.json").read_text())
