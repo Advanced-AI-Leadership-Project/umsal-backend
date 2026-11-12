@@ -225,7 +225,7 @@ Resources:
             ExecStartPre=-/usr/bin/docker rm -f umsal-turn
 
             ExecStart=/usr/bin/docker run --rm --name umsal-turn --network host --user 65534:$turn_gid
-            --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,noexec,nosuid,size=8m
+            --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,noexec,nosuid,size=8m
             --volume /etc/turnserver.conf:/etc/coturn/turnserver.conf:ro --entrypoint turnserver $image
             -c /etc/coturn/turnserver.conf --pidfile=/tmp/turnserver.pid --userdb=/tmp/turnserver.db
 
