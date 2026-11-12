@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from umsal_backend import (
     __version__,
     assignments,
+    calls,
     connections,
     consents,
     disconnect,
@@ -19,6 +20,7 @@ from umsal_backend import (
     recordings,
 )
 from umsal_backend.auth import TokenVerifier
+from umsal_backend.call_storage import CallServices, calls_from_env
 from umsal_backend.db import DatabaseTarget, as_target, database_from_env, postgres_probe
 from umsal_backend.dynamo import dynamodb_probe_from_env
 from umsal_backend.errors import install_error_handlers
@@ -35,6 +37,7 @@ def create_app(
     database: str | DatabaseTarget | None | object = _FROM_ENV,
     audio_store: AudioStore | None | object = _FROM_ENV,
     result_store: ResultStore | None | object = _FROM_ENV,
+    call_services: CallServices | None | object = _FROM_ENV,
 ) -> FastAPI:
     # Interactive docs and the generated schema only on a developer machine (#66);
     # deployed environments are public through CloudFront and the contract lives in
@@ -60,6 +63,7 @@ def create_app(
     # FAILED/STAGE_NOT_AVAILABLE and getResult answers 503 for a completed recording.
     app.state.result_store = result_store_from_env() if result_store is _FROM_ENV else result_store
     install_error_handlers(app)
+    app.state.call_services = calls_from_env() if call_services is _FROM_ENV else call_services
 
     @app.get("/health", tags=["ops"])
     def health() -> dict[str, str]:
@@ -88,6 +92,7 @@ def create_app(
     app.include_router(labels.router)
     app.include_router(recordings.router)
     app.include_router(assignments.router)
+    app.include_router(calls.router)
     return app
 
 

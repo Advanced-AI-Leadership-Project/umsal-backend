@@ -9,6 +9,7 @@ Metadata:
       - Worker invocation uses IAM and remains separate from the public API
       - CPU instances scale from zero to one and terminate on idle shutdown
 Parameters:
+  CallRelayFunctionArn: {Type: String, Default: ''}
   VpcId: {Type: 'AWS::EC2::VPC::Id'}
   SubnetId: {Type: 'AWS::EC2::Subnet::Id'}
   ApiSecurityGroup: {Type: 'AWS::EC2::SecurityGroup::Id'}
@@ -21,6 +22,8 @@ Parameters:
   ResultTable: {Type: String}
   DbHost: {Type: String}
   DbResourceId: {Type: String}
+Conditions:
+  UseCalls: !Not [!Equals [!Ref CallRelayFunctionArn, '']]
 Resources:
   DeadLetter:
     Type: AWS::SQS::Queue
@@ -101,7 +104,7 @@ Resources:
     Metadata:
       com.aws.cloudformation.Context:
         why: Workers call both the job API and capacity controller over private HTTPS.
-        must: [Use the endpoint-specific DNS name, Invoke only these two functions]
+        must: [Use endpoint-specific DNS; invoke analysis functions and optional call credential function only]
     Properties:
       VpcId: !Ref VpcId
       VpcEndpointType: Interface
@@ -116,6 +119,7 @@ Resources:
             Principal: '*'
             Action: lambda:InvokeFunction
             Resource:
+              - !If [UseCalls, !Ref CallRelayFunctionArn, !Ref AWS::NoValue]
               - !GetAtt WorkerApi.Arn
               - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-cpu-control'
   ApiLogs:

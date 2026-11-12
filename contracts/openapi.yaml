@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 엄살 MVP API 계약
-  version: 0.4.0
+  version: 0.5.0
   description: 설계 스키마. 원본은 umsal-backend contracts/(umsal-pwa e54088b의 v0.2.0에서 이관). 구현 상태는 umsal-backend
     SPEC "현재 구현 상태"를 따르며 이 문서의 operation이 실행 중임을 뜻하지 않는다. 모든 경로는 /api 아래(D2). 사용자CognitoBearer와기계AWS_IAM/SigV4
     분리. 모든긴처리는비동기.
@@ -2086,6 +2086,580 @@ paths:
       parameters:
       - *id003
       - *id004
+  /calls:
+    post:
+      tags:
+      - Calls
+      summary: Create Call
+      operationId: createCall
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 8
+          maxLength: 128
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCall'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceCall'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
+    get:
+      tags:
+      - Calls
+      summary: Current Call
+      operationId: getCurrentCall
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentCall'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
+  /calls/{call_id}:
+    get:
+      tags:
+      - Calls
+      summary: Get Call
+      operationId: getCall
+      parameters:
+      - name: call_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^call_[a-f0-9]{32}$
+          title: Call Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceCall'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
+    delete:
+      tags:
+      - Calls
+      summary: End Call
+      operationId: endCall
+      parameters:
+      - name: call_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^call_[a-f0-9]{32}$
+          title: Call Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallClient'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceCall'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
+  /calls/{call_id}/accept:
+    post:
+      tags:
+      - Calls
+      summary: Accept Call
+      operationId: acceptCall
+      parameters:
+      - name: call_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^call_[a-f0-9]{32}$
+          title: Call Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallClient'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceCall'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
+  /calls/{call_id}/heartbeat:
+    post:
+      tags:
+      - Calls
+      summary: Heartbeat
+      operationId: heartbeatCall
+      parameters:
+      - name: call_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^call_[a-f0-9]{32}$
+          title: Call Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallHeartbeat'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceCall'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
+  /calls/{call_id}/signal:
+    put:
+      tags:
+      - Calls
+      summary: Put Signal
+      operationId: putCallSignal
+      parameters:
+      - name: call_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^call_[a-f0-9]{32}$
+          title: Call Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallSignal'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceCall'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
+    get:
+      tags:
+      - Calls
+      summary: Get Signal
+      operationId: getCallSignal
+      parameters:
+      - name: call_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^call_[a-f0-9]{32}$
+          title: Call Id
+      - name: client_id
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+          title: Client Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoteSignal'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
+  /calls/{call_id}/ice-servers:
+    get:
+      tags:
+      - Calls
+      summary: Ice Servers
+      operationId: getCallIceServers
+      parameters:
+      - name: call_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^call_[a-f0-9]{32}$
+          title: Call Id
+      - name: client_id
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+          title: Client Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IceServers'
+        '401':
+          description: 로그인 필요
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 참여 역할 제한
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 참여하지 않은 통화는 존재를 숨김
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 통화 중, 다른 기기 소유 또는 이미 종료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 잘못된 입력
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 통화 서비스 일시 불가
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - CognitoBearer: []
+      description: 활성 가족 연결의 전경 1:1 음성 통화. 분석 동의와 별개로 수락하며 음성은 저장하지 않는다. 종료된 통화의 신호와 릴레이 자격은 반환하지 않는다.
 components:
   securitySchemes:
     CognitoBearer:
@@ -3524,3 +4098,185 @@ components:
       - enabled
       - updated_at
       description: 기기 토큰·SNS endpoint/개인식별자는 응답하지 않는다.
+    IceServers:
+      properties:
+        ice_servers:
+          items:
+            $ref: '#/components/schemas/IceServer'
+          type: array
+          title: Ice Servers
+        expires_at:
+          type: integer
+          title: Expires At
+      type: object
+      required:
+      - ice_servers
+      - expires_at
+      title: IceServers
+    CallClient:
+      properties:
+        client_id:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+          title: Client Id
+      additionalProperties: false
+      type: object
+      required:
+      - client_id
+      title: CallClient
+    CallHeartbeat:
+      properties:
+        client_id:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+          title: Client Id
+        connected:
+          type: boolean
+          title: Connected
+          default: false
+      additionalProperties: false
+      type: object
+      required:
+      - client_id
+      title: CallHeartbeat
+    VoiceCall:
+      properties:
+        call_id:
+          type: string
+          title: Call Id
+        connection_id:
+          type: string
+          title: Connection Id
+        caller_id:
+          type: string
+          title: Caller Id
+        callee_id:
+          type: string
+          title: Callee Id
+        state:
+          type: string
+          enum:
+          - RINGING
+          - ACCEPTED
+          - ACTIVE
+          - ENDED
+          - REJECTED
+          - CANCELLED
+          - EXPIRED
+          title: State
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        accepted_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Accepted At
+        ended_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ended At
+      type: object
+      required:
+      - call_id
+      - connection_id
+      - caller_id
+      - callee_id
+      - state
+      - created_at
+      - accepted_at
+      - ended_at
+      title: VoiceCall
+    RemoteSignal:
+      properties:
+        type:
+          type: string
+          enum:
+          - offer
+          - answer
+          title: Type
+        sdp:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sdp
+      type: object
+      required:
+      - type
+      - sdp
+      title: RemoteSignal
+    CreateCall:
+      properties:
+        client_id:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+          title: Client Id
+        connection_id:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$
+          title: Connection Id
+      additionalProperties: false
+      type: object
+      required:
+      - client_id
+      - connection_id
+      title: CreateCall
+    CurrentCall:
+      properties:
+        call:
+          anyOf:
+          - $ref: '#/components/schemas/VoiceCall'
+          - type: 'null'
+      type: object
+      required:
+      - call
+      title: CurrentCall
+    CallSignal:
+      properties:
+        client_id:
+          type: string
+          pattern: ^[a-f0-9-]{36}$
+          title: Client Id
+        type:
+          type: string
+          enum:
+          - offer
+          - answer
+          title: Type
+        sdp:
+          type: string
+          maxLength: 65536
+          minLength: 10
+          title: Sdp
+      additionalProperties: false
+      type: object
+      required:
+      - client_id
+      - type
+      - sdp
+      title: CallSignal
+    IceServer:
+      properties:
+        urls:
+          items:
+            type: string
+          type: array
+          title: Urls
+        username:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Username
+        credential:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Credential
+      type: object
+      required:
+      - urls
+      title: IceServer

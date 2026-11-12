@@ -22,6 +22,18 @@ Metadata:
       - No secrets in parameters, environment variables or logs (JWKS are public keys)
       - Leaving every stage-2 parameter empty must keep the stage-1 deployment unchanged
 Parameters:
+  CallRelayFunctionArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:aws:lambda:ap-southeast-2:[0-9]{12}:function:[A-Za-z0-9_-]+$'
+  CallSignalsTableName:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[A-Za-z0-9_.-]{3,255}$'
+  CallLambdaEndpoint:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^https://vpce-[a-z0-9-]+\.lambda\.ap-southeast-2\.vpce\.amazonaws\.com$'
   CpuRealAudioEnabled:
     Type: String
     Default: 'false'
@@ -98,12 +110,20 @@ Parameters:
       MVP recordings (#70). AudioBucketName output of umsal-backend-storage (empty = no
       upload API permissions).
 Conditions:
+  UseCalls: !Not [!Equals [!Ref CallRelayFunctionArn, '']]
   UseVpc: !Not [!Equals [!Ref SubnetIds, '']]
   UseDatabase: !Not [!Equals [!Ref DbHost, '']]
   UseCognito: !Not [!Equals [!Ref CognitoUserPoolId, '']]
   UseDynamo: !Not [!Equals [!Ref DynamoTableName, '']]
   UseAudio: !Not [!Equals [!Ref AudioBucketName, '']]
 Rules:
+  CallsNeedStorageAndEndpoint:
+    RuleCondition: !Not [!Equals [!Ref CallRelayFunctionArn, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref CallSignalsTableName, '']]
+        AssertDescription: Calls require the dedicated signaling table
+      - Assert: !Not [!Equals [!Ref CallLambdaEndpoint, '']]
+        AssertDescription: Private API requires the Lambda endpoint DNS
   # Rules accept only rule functions (Equals, Not, And, Or, Contains, ...), not Join.
   VpcNeedsSecurityGroup:
     RuleCondition: !Not [!Equals [!Ref SubnetIds, '']]
@@ -155,6 +175,21 @@ Resources:
             Condition:
               StringEquals: {'aws:SourceAccount': !Ref AWS::AccountId}
       Policies:
+        - !If
+          - UseCalls
+          - PolicyName: VoiceCallServices
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: lambda:InvokeFunction
+                  Resource: !Ref CallRelayFunctionArn
+                - Effect: Allow
+                  Action: [dynamodb:PutItem, dynamodb:GetItem]
+                  Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${CallSignalsTableName}'
+                  Condition:
+                    ForAllValues:StringLike: {'dynamodb:LeadingKeys': ['CALL#*']}
+          - !Ref AWS::NoValue
         - PolicyName: OwnLogsOnly
           PolicyDocument:
             Version: '2012-10-17'
@@ -252,6 +287,9 @@ Resources:
         - !Ref AWS::NoValue
       Environment:
         Variables:
+          CALL_SIGNALS_TABLE: !If [UseCalls, !Ref CallSignalsTableName, !Ref AWS::NoValue]
+          CALL_RELAY_FUNCTION: !If [UseCalls, !Ref CallRelayFunctionArn, !Ref AWS::NoValue]
+          CALL_LAMBDA_ENDPOINT: !If [UseCalls, !Ref CallLambdaEndpoint, !Ref AWS::NoValue]
           UMSAL_ENV: !Ref Environment
           UMSAL_CPU_PILOT_USERS: !Ref CpuPilotUsers
           UMSAL_CPU_REAL_AUDIO_ENABLED: !Ref CpuRealAudioEnabled

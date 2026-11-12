@@ -28,6 +28,8 @@ EXAMPLES = CONTRACTS / "examples"
 METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
 PUBLIC_PATHS = {"/health/live", "/health/ready"}
 EXAMPLE_SCHEMAS = {
+    "call-create.json": "CreateCall",
+    "call-view.json": "VoiceCall",
     "audio-prep-ready.json": "AudioPrepArtifact",
     "worker-complete-request.json": "CompleteRequest",
     "worker-claim-request.json": "ClaimRequest",
@@ -137,7 +139,7 @@ def test_local_refs_resolve(contract):
 
 def test_version_and_server_prefix(contract):
     spec = contract["spec"]
-    assert spec["info"]["version"] == "0.4.0"
+    assert spec["info"]["version"] == "0.5.0"
     assert spec["servers"] == [{"url": "/api", "description": spec["servers"][0]["description"]}]
 
 
@@ -164,7 +166,7 @@ def test_operations_have_expected_auth_and_unique_ids(contract):
     assert len(ids) == len(set(ids)), "Duplicate operationId"
     # 28 operations from umsal-pwa v0.2.0 + health live/ready (D2) + listConnections (D7)
     # + setConnectionLabel (D10).
-    assert len(ids) == 32
+    assert len(ids) == 41
     assert {"getHealthLive", "getHealthReady", "listConnections"} <= set(ids)
 
 
@@ -176,9 +178,11 @@ def test_schemas_are_valid_json_schema(contract):
 
 def test_examples_validate(contract):
     examples = contract["examples"]
-    assert len(examples) == 14, "Expected the 14 reviewed contract examples"
+    assert len(examples) == 16, "Expected the 16 reviewed contract examples"
     for filename, example in examples.items():
         if filename not in {
+            "call-create.json",
+            "call-view.json",
             "upload-recording.json",
             "upload-finalize-recording.json",
             "recording-analysis-unavailable.json",

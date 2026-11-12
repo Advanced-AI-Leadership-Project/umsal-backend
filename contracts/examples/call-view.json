@@ -1,0 +1,10 @@
+{
+  "call_id": "call_11111111111111111111111111111111",
+  "connection_id": "con_synthetic_family",
+  "caller_id": "usr_synthetic_caller",
+  "callee_id": "usr_synthetic_callee",
+  "state": "RINGING",
+  "created_at": "2026-11-11T00:00:00Z",
+  "accepted_at": null,
+  "ended_at": null
+}
