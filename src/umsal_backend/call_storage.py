@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import Any, Protocol
@@ -36,7 +37,7 @@ class AwsCallServices:
                 else None,
                 config=Config(
                     connect_timeout=2,
-                    read_timeout=3,
+                    read_timeout=8 if service == "lambda" else 3,
                     retries={"total_max_attempts": 1, "mode": "standard"},
                 ),
             )
@@ -48,6 +49,13 @@ class AwsCallServices:
         try:
             return getattr(self.client(service), operation)(**kwargs)
         except (BotoCoreError, ClientError) as exc:
+            # Fixed metadata only; exception strings may carry URLs or credentials.
+            logging.getLogger(__name__).warning(
+                "Voice call dependency failed (%s/%s, %s)",
+                service,
+                operation,
+                type(exc).__name__,
+            )
             raise unavailable() from exc
 
     def put_signal(self, call_id: str, side: str, sdp: str) -> None:

@@ -21,3 +21,7 @@ Ubuntu 24.04 기본 coturn 4.6.1 대신 [공식 Docker 릴리스 4.18.0-r0](http
 자격 발급 Lambda는 SDK 초기화와 Secrets Manager 호출을 제한 시간 안에 처리하도록 512MiB를 할당한다. 실행 제한 8초·동시성 2는 유지한다.
 
 공식 이미지 실행 파일이 NET_BIND_SERVICE file capability를 가지므로 이 capability를 bounding set에 남긴다. 이외 capability는 모두 제거하며 no-new-privileges를 유지한다.
+
+## 동기 호출 시간 예산 (#94)
+
+제품 API의 전체 제한은 15초다. IAM 전용 자격 함수 호출의 SDK 응답 대기는 8초로 두어 실제 함수 처리 2.6초에 플랫폼/전송 시간을 더해도 조기 실패하지 않게 한다. DynamoDB 응답 대기는 계속 3초다. 호출 실패 로그는 서비스 이름·operation·예외 종류만 포함하며 본문·예외 문자열·SDP·자격은 제외한다.
