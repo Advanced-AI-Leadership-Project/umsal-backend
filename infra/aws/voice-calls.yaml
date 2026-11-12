@@ -170,7 +170,7 @@ Resources:
             chmod 755 /usr/sbin/policy-rc.d
 
             for attempt in $(seq 1 12); do apt-get update -qq && apt-get install -y -qq coturn python3-boto3
-            && break; sleep 10; done
+            docker.io && break; sleep 10; done
 
             rm -f /usr/sbin/policy-rc.d
 
@@ -196,11 +196,56 @@ Resources:
 
             CONFIG
 
-            systemctl enable coturn
+            # Pin the upstream security release instead of running Ubuntu''s old coturn binary.
 
-            systemctl restart coturn
+            systemctl enable --now docker
 
-            systemctl is-active --quiet coturn
+            image=''coturn/coturn@sha256:59af4221a2c45c1195a1a4a865542b3ea744be1dd8e228d11bde87c6631081cf''
+
+            docker pull "$image"
+
+            turn_gid=$(getent group turnserver | cut -d: -f3)
+
+            cat > /etc/systemd/system/umsal-turn.service <<UNIT
+
+            [Unit]
+
+            Description=UMSAL authenticated TURN relay
+
+            After=network-online.target docker.service
+
+            Requires=docker.service
+
+            [Service]
+
+            Restart=always
+
+            RestartSec=3
+
+            ExecStartPre=-/usr/bin/docker rm -f umsal-turn
+
+            ExecStart=/usr/bin/docker run --rm --name umsal-turn --network host --user 65534:$turn_gid
+            --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,noexec,nosuid,size=8m
+            --volume /etc/turnserver.conf:/etc/coturn/turnserver.conf:ro --entrypoint turnserver $image
+            -c /etc/coturn/turnserver.conf --pidfile=/tmp/turnserver.pid --userdb=/tmp/turnserver.db
+
+            ExecStop=/usr/bin/docker stop -t 10 umsal-turn
+
+            TimeoutStopSec=20
+
+            [Install]
+
+            WantedBy=multi-user.target
+
+            UNIT
+
+            systemctl disable --now coturn
+
+            systemctl daemon-reload
+
+            systemctl enable --now umsal-turn
+
+            systemctl is-active --quiet umsal-turn
 
             touch /var/lib/umsal-turn-ready
 
