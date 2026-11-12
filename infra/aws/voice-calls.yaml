@@ -339,7 +339,7 @@ Resources:
       Architectures:
       - x86_64
       Handler: umsal_backend.turn_relay.handler
-      MemorySize: 128
+      MemorySize: 512
       Timeout: 8
       ReservedConcurrentExecutions: 2
       Role:
