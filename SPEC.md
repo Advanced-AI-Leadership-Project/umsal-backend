@@ -8,7 +8,7 @@
 |---|---|
 | 앱 | FastAPI (Python 3.12) |
 | 실행 | AWS Lambda + API Gateway, Mangum 어댑터. Lambda는 전용 VPC의 프라이빗 서브넷에서 실행한다 |
-| 관계형 저장소 | Aurora PostgreSQL serverless (자동 일시정지) |
+| 관계형 저장소 | VPC 안 RDS for PostgreSQL 17. Aurora에서 변경한 결정과 호환 필드는 아래 기록을 따른다 |
 | 키-값 저장소 | DynamoDB |
 | 파일 저장소 | S3 (비공개 버킷) |
 | 리전 | ap-southeast-2 (Sydney) 단일 리전 |
@@ -22,9 +22,11 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 
 | 저장소 | 저장 내용 | 선택 이유 |
 |---|---|---|
-| Aurora PostgreSQL | 사용자·가족 관계·동의 grant·공유 scope, 그리고 상태·fencing을 정하는 녹음(recordings)·분석 작업(analysis_jobs)·화자 확인(speaker_assignments)·삭제 작업(deletion_jobs)·outbox·멱등 키 | 관계와 제약(외래 키·유일성)이 필요하다. 동의 확인과 작업 상태 확정을 한 트랜잭션으로 묶어야 철회 직후의 작업 상태 확정을 막을 수 있다(결과 본문 경합은 아래 불변조건 참조) |
-| DynamoDB | 전사 발화(utterances)·분석 관찰(observations)·결과 뷰·주간 집계 항목 | 양이 많고 키로 읽는 결과 본문. 어떤 결과가 유효한지는 Aurora의 작업 상태가 정한다 |
-| S3 | 원음 파일·작업 산출물(작업자는 API가 허용한 작업 전용 출력 경로에만 쓴다, [API 계약 초안](docs/api-contract.md) D9) | DynamoDB 항목 400KB 제한을 넘는 파일. 보관 기한은 수명 주기 규칙으로 관리한다 |
+| RDS PostgreSQL | 사용자·가족 관계·동의 grant·공유 scope, 녹음(recordings)·분석 작업(analysis_jobs)·화자 확인(speaker_assignments)·outbox·멱등 키・통화(voice_calls). 삭제 작업(deletion_jobs)은 목표 범위 | 관계와 제약(외래 키·유일성)이 필요하다. 동의 확인과 작업 상태 확정을 한 트랜잭션으로 묶어야 철회 직후의 작업 상태 확정을 막을 수 있다(결과 본문 경합은 아래 불변조건 참조) |
+| DynamoDB | 현재 CPU 결과 본문, 별도 통화 신호 테이블. 발화·관찰·주간 집계의 세부 분해 저장은 목표 설계 | 양이 많고 키로 읽는 결과 본문. 어떤 결과가 유효한지는 PostgreSQL의 작업 상태가 정한다 |
+| S3 | 원음 파일·작업 산출물(작업자는 API가 허용한 작업 전용 출력 경로에만 쓴다, [API 계약 초안](docs/api-contract.md) D9) | DynamoDB 항목 400KB 제한을 넘는 파일. 기한·모든 버전·파생 산출물의 물리 삭제는 후속 정책/구현과 대조해야 한다 |
+
+현재 구현/목표의 구분은 아래 표를 따른다. 다음 불변조건은 목표 요구사항도 포함하며, 물리 삭제·백업 만료까지 완료됐다는 의미는 아니다.
 
 ### 저장소를 넘나드는 불변조건
 
@@ -46,27 +48,24 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 
 ## 현재 구현 상태
 
-| 항목 | 상태 |
-|---|---|
-| `GET /health` | 구현. 배포 확인용. 프로세스 생존만 응답하며 Aurora·DynamoDB·S3 등 의존성 상태는 보증하지 않는다 |
-| `GET /api/health/live`·`GET /api/health/ready` | 구현(D2, #17). PWA와 같은 응답 모양. ready는 `checks.aurora`·`checks.dynamodb`를 따로 표시하고 둘 다 `ok`일 때만 `ready`(PWA 호환 `checks.database`도 그때만 `ok`). PostgreSQL 확인(`checks.aurora`, 2단계 배포에서 `ok` 확인)과 DynamoDB 확인(`DescribeTable`로 `ACTIVE`, #52)이 있다. 2026-11-05 3단계 배포 뒤 배포 환경의 ready는 200 `ready`(세 `checks` 모두 `ok`)다(#54) |
-| Lambda 핸들러 | 구현. 합성 API Gateway HTTP API v2 이벤트로만 테스트했다 |
-| AWS 배포(IaC) | 1단계(#19, API Gateway HTTP API + Lambda)와 2단계(VPC·RDS PostgreSQL·Cognito, 2026-11-05 배포, 기록 #49)를 CloudFormation으로 배포했다([배포 문서](docs/aws-deployment.md)). 3단계 저장소 기반(DynamoDB 테이블·원음 S3 버킷, `storage.yaml`, #52)도 2026-11-05 생성했다([설계](docs/aws-stage3-design.md), 기록 #54). 2026-11-08부터 PWA CloudFront `/api/*`(푸시 `/api/push/*` 제외)가 이 API로 간다(umsal-pwa #115) |
-| 2단계 AWS | 배포·확인 완료(2026-11-05). IAM 토큰 DB 접속(verify-full TLS, 토큰 10분 재사용), 배포 때 고정한 Cognito JWKS, 마이그레이션 Lambda(2026-11-08 `0005`까지 적용), 매일 정리 작업 스케줄, `network.yaml`·`database.yaml`(RDS PostgreSQL, #44)·`auth.yaml`·`jobs.yaml`·일회용 `db-bootstrap.yaml`(사용 후 삭제) |
-| 사용자 인증 | Cognito access token 검증 의존성 구현(D3, #21). 배포 환경에서 합성 계정의 access token으로 `/api/me` 200, id token 401을 확인했다(#49) |
-| 사용자·관계 조회 | `GET /api/me`(인증된 첫 성공 요청에서 사용자 생성, 실패한 요청의 트랜잭션은 되돌림), `GET /api/connections`(cursor 페이지), `GET /api/connections/{id}`(비참여자 404) 구현(#29). `users`·`connections` 마이그레이션 `0002`. 실제 PostgreSQL 테스트를 거쳤고 2단계로 AWS에 배포했다. 표시 이름은 빈 문자열이고, 가족 이름은 연결별 호칭으로 보여 준다(D10) |
-| 초대 | `POST /api/invitations`(24시간 유효 코드, 해시만 저장), `POST /api/invitations/{id}/accept`(ACTIVE 관계 생성, 1회 수락, 동시 수락 방지) 구현(#31). 두 경로 모두 `Idempotency-Key` 필수(같은 요청 재전송, 다른 요청 409). 마이그레이션 `0003`. 실제 PostgreSQL 테스트를 거쳤고 2단계로 AWS에 배포했다. 요청 한도(429) 미구현. 만료 기록·만료 미수락 초대 정리 작업 `python -m umsal_backend.maintenance`(#36)는 있으나 주기 실행은 2단계 jobs.yaml의 매일 03:00(KST) 일정으로 연결 |
-| 동의 | `GET/PUT /api/connections/{id}/consents` 구현(#34). 방향별 grant(분석·공유 scope·확인 preview), 관계 생성 시 전부 거부로 시작, 본인 행만 `expected_version`으로 수정, 서버가 양쪽 허용 여부 계산(ACTIVE일 때만). 마이그레이션 `0004`. 실제 PostgreSQL 테스트를 거쳤고 2단계로 AWS에 배포했다. 분석 동의 철회 시 처리 취소는 녹음·작업이 없어 미연결 |
-| 연결 해제 | `DELETE /api/connections/{id}` 구현(#36). 관계 행 잠금 → DISCONNECTED·version+1 → 양방향 grant 전부 거부·version+1, 이미 해제면 변화 없는 202, `Idempotency-Key` 필수. 보관 자료 삭제는 하지 않는다(별도 삭제 요청). 실제 PostgreSQL 테스트를 거쳤고 2단계로 AWS에 배포했다 |
-| 연결별 호칭 | `PUT /api/connections/{id}/label`(`setConnectionLabel`) 구현(#62, D10). 초대 생성·수락 본문의 선택 `label`, 응답 `Connection.label`(요청자 본인의 호칭만). 1~16자·제어 문자 불가를 API와 DB CHECK 양쪽에서 검사, 참여자만·ACTIVE 연결만 변경(해제된 연결의 기존 호칭은 본인 조회에 계속 보임), `Idempotency-Key` 필수. 마이그레이션 `0005`(`connection_labels`, `invitations.inviter_label`). 실제 PostgreSQL 테스트를 거쳤고 2026-11-08 AWS에 배포했다(코드 `110b6b4`, [기록](docs/aws-deployment.md#연결별-호칭-배포-기록-62)) |
-| 녹음 업로드·조회 | `createUpload`·`finalizeUpload`·`getJob`·`getRecording`·`listRecordings` 구현(#73). 마이그레이션 `0006`. 신규 S3 키는 인증된 내부 `user_id`별로 분리하고 기존 키도 DB `s3_key`로 재발급·finalize한다(#77, [운영 소스 복원 기록](docs/deployed-mobile-restoration.md)). 외부 API 계약·동의·권한 범위는 동일하다 |
-| 분석 | `stub-1` 대역의 오디오 준비 단계만 구현(`demo: true`). 실제 모델·화자 확인·결과·삭제 API는 후속 범위 |
-| PostgreSQL 연결·마이그레이션 | 기반 구현(#23). 로컬 Docker PostgreSQL 17, `DATABASE_URL` 연결(연결 3초·쿼리 3초 제한), ready의 `checks.aurora` 실제 확인, Alembic(`0001` 기준, `0002` users·connections, `0003` invitations·idempotency_keys, `0004` consent_grants). AWS에서는 RDS PostgreSQL(IAM 인증)에 `0004`까지 적용했다(2단계, #49). 나머지 업무 테이블은 미구현 |
-| DynamoDB·S3 저장 | 기반(#52)에 S3 서명 PUT·버전/체크섬 확인·finalize 이전 버전 정리 구현(#73). 사용자는 비공개 버킷에 제한된 URL로 업로드하며 API는 원음 본문을 읽지 않는다. 사용자별/기존 키 호환은 #77. 결과 저장·삭제 작업 전체는 후속 범위 |
-| API 계약 | 원본을 `contracts/openapi.yaml`(v0.4.0)로 이관(#25). 정적 검사, 구현 operation과 계약의 자동 비교(`tests/test_contract_parity.py`, #36), 응답 스키마 검사를 테스트로 실행한다. 계약 v0.4.0의 operation 32개 중 health 2개를 포함한 16개 구현 |
-| PWA 연동 | health 경로만 PWA 계약에 맞춤. 업무 API와 실제 연결 확인은 미구현 |
+2026-11-17 main `e0b14a9`의 소스 기준이다. 과거 배포 근거는 [배포 기록](docs/aws-deployment.md)과 [통화 문서](docs/voice-calls.md)로 분리한다. 이번 문서 정리는 AWS 현재 설정·실기기를 새로 검증하지 않았다.
 
-목표 설계를 구현 완료로 보고하지 않는다. 기능이 추가되면 위 표를 실제 상태로 갱신한다.
+| 항목 | 구현·남은 범위 |
+|---|---|
+| health·Lambda | `/health`와 `/api/health/live`, `/api/health/ready`, Mangum 진입점. ready의 `checks.aurora`는 호환 필드명이며 실제 DB는 RDS PostgreSQL이다 |
+| 인증·가족 | Cognito access token 검증, 사용자 첫 요청 생성, 관계 목록/상세, 초대 생성/수락, 연결별 호칭·해제. 초대 수락은 동의가 아니다 |
+| 동의·권한 | 방향별 grant와 scope·버전 검사, 기본 전부 거부. 현재 grant·활성 관계·화자 버전에 따라 작업 확정과 결과 노출을 제한한다 |
+| 업로드·조회 | `createUpload`, `finalizeUpload`, `getJob`, `getRecording`, `listRecordings`. 제한된 S3 PUT·버전/체크섬 고정·내부 사용자별 키·기존 키 호환 |
+| 화자·결과 | `assignSpeaker`, `getResult` (`assignments.py`). 확인한 대상/버전·현재 공유 scope로 결과를 조회하며 미확인 상태에서 텍스트 결과를 만들지 않는다 |
+| 실제 CPU 분석 | `workers/cpu`·`worker_api.py`·outbox/SQS. `stub-1` 합성 대역과 `cpu-1` 합성 입력·`cpu-2` 실제/합성 입력을 구분한다. 모노 화자 준비 → 사용자 확인 → 전사/텍스트 분석. 모델 품질·임상 타당성 완료를 뜻하지 않는다 |
+| CPU 자동 기동 | `cpu-analysis.yaml`·`worker_control.py`: 최대 1대, 처리 중 축소 보호, 작업 후 유휴 종료. 배포된 실제 용량/정상 종료는 별도 AWS 확인이 필요하다 |
+| 전경 1:1 통화 | `calls.py` 9개 operation·RDS 상태·별도 DynamoDB 신호·coturn. 분석과 별도이며 통화 미디어를 저장하지 않는다. 화면 잠금/백그라운드 수신·실제 단말 통화는 별도 범위 |
+| 데이터·IaC | PostgreSQL 마이그레이션 `0001`~`0009`, RDS/S3/DynamoDB·인증·CPU·통화 CloudFormation. 코드에 있는 마이그레이션과 현재 운영 DB 적용 버전을 혼동하지 않는다 |
+| API 계약 | 원본 v0.5.0, 33 paths / 41 operations. 공개 FastAPI `/api` 구현은 health 2개 포함 27개. 내부 claim/heartbeat/complete/fail은 IAM Lambda 경로이며 목표 HTTP operation 4개를 구현한 것으로 세지 않는다. [상세 대조](docs/api-contract.md#2-현재-구현과-원안의-차이) |
+| PWA 연동 | PWA의 계정·가족·동의·접수·화자/결과·통화 클라이언트가 이 API를 호출한다. PWA 로컬 health/push scaffold는 업무 API와 다르다 |
+| 후속 기능 | 녹음 DELETE·삭제 상태/일괄 삭제, 주간 집계, 설정/기기 등록, 피드백, 공개 retry 경로. `maintenance.py`의 녹음 task는 `not_implemented`. 철회 후 비노출·작업 fencing과 원음/결과/백업 물리 삭제를 구분한다 |
+
+목표 설계를 구현 완료로 보고하지 않는다. 통화 DELETE는 통화 종료이며 녹음 DELETE가 아니다. 오래된 이슈는 수용 기준 전체를 대조한 뒤 닫는다.
 
 CPU 분석은 양쪽 계정의 현재 분석 동의를 확인한 실제·합성 녹음을 처리한다. `CpuRealAudioEnabled=true`에서 WAV·MP3·M4A, 최대 50 MiB·10분을 모노 화자 분리 후 사용자 화자 확인과 텍스트 분석으로 연결한다. 기존 cpu-1 작업·결과도 지원한다. 모델과 AWS 작업 큐의 구현 범위는 [CPU 분석](workers/cpu/README.md)에 기록한다.
 CPU 작업 큐는 1분 주기 용량 제어와 최대 1대 Auto Scaling을 사용한다. 처리 중인 워커는 축소 보호를 유지하고, 60초간 새 메시지가 없으면 큐를 다시 확인한 후 보호를 해제해 종료한다. 실제 자동 기동·분석·종료의 배포 검증은 별도로 기록한다.

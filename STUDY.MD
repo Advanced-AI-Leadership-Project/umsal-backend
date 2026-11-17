@@ -9,3 +9,9 @@ WebRTC는 브라우저끼리 음성을 주고받는 기술이다. 가족 권한�
 `turn_relay.py`는 Secrets Manager의 비밀로 짧게 쓸 수 있는 TURN 자격을 만든다. 영구 비밀을 웹에 전달하지 않고 기존 API 역할이 IAM으로만 이 함수를 호출한다. `voice-calls.yaml`은 SSH 없이 관리하는 EC2·고정 IP를 별도로 정의한다.
 
 직접 확인할 명령은 `make db-up` 뒤 `make python-check`다. 테스트는 합성 계정과 가짜 네트워크 신호를 쓰며 실제 통화 검증과 다르다. 실제 동작은 두 기기 로그인 → 가족 연결 → 전화 → 수락 → 음소거 → 종료 순서로 확인한다.
+
+## 2026-11-17 현재 상태와 계약 정리
+
+OpenAPI 목표에 operation이 있어도 실제 경로가 등록됐다는 뜻은 아니다. 이번 정리는 원본 YAML의 41개와 FastAPI `/api`의 27개를 대조하고, CPU의 IAM Lambda 인터페이스를 공개 HTTP 경로와 구분했다. 운영 DB 이름은 RDS PostgreSQL로 맞추되 `checks.aurora` 같은 계약 필드 이름은 바꾸지 않았다.
+
+철회 뒤 결과 비노출과 파일 물리 삭제도 다르다. 현재 grant·작업/화자 버전 검사는 결과 노출을 제한하지만, 녹음 DELETE·모든 S3 버전·결과·백업 삭제 완료는 별도 요구사항이다. [문서 색인](docs/README.md)에서 현재 SPEC와 과거 배포 기록을 구분해서 읽는다.
