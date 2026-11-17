@@ -77,7 +77,7 @@ Lambda에 종료를 요청한다. 제어기는 큐를 다시 확인해 작업이
 |---|---|---|
 | `WorkerInstanceType` | `m7i-flex.large` | `g4dn.xlarge` (T4, vCPU 4) |
 | `WorkerAmi` | Amazon Linux 2023 | Deep Learning Base GPU AMI (Amazon Linux 2023) |
-| `WorkerVolumeSize` | 16 | 60 |
+| `WorkerVolumeSize` | 16 | 80 (DLAMI 루트 스냅샷이 75 GiB) |
 | `WorkerMaxAudioSeconds` | 600 | 3600 |
 | `WorkerDeadlineSeconds` | 900 | 3000 |
 | `WorkerShutdownMinutes` | 20 | 60 (프로세스 제한보다 길게) |
