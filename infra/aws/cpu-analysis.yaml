@@ -421,10 +421,11 @@ Resources:
                 rm bundle.tar.gz
                 chmod -R a+rX /opt/umsal
                 echo UMSAL_CPU_BUNDLE_VERIFIED
-                timeout --kill-after=10 ${WorkerDeadlineSeconds} runuser -u ec2-user -- env PYTHONPATH=/opt/umsal/site AWS_DEFAULT_REGION=${AWS::Region} AWS_ENDPOINT_URL_LAMBDA=https://${EndpointDns} /opt/umsal/python/bin/python3 /opt/umsal/run.py --queue-url '${Queue}' --worker-api '${WorkerApi}' --audio-host '${AudioBucket}.s3.${AWS::Region}.amazonaws.com' --models /opt/umsal/models --control-function '${AWS::StackName}-cpu-control' --idle-seconds 60 --deadline-seconds ${WorkerDeadlineSeconds} --max-audio-seconds ${WorkerMaxAudioSeconds} --device ${Device} --compute-type ${ComputeType}
+                timeout --kill-after=10 ${WorkerDeadlineSeconds} runuser -u ec2-user -- env ${GpuEnv} PYTHONPATH=/opt/umsal/site AWS_DEFAULT_REGION=${AWS::Region} AWS_ENDPOINT_URL_LAMBDA=https://${EndpointDns} /opt/umsal/python/bin/python3 /opt/umsal/run.py --queue-url '${Queue}' --worker-api '${WorkerApi}' --audio-host '${AudioBucket}.s3.${AWS::Region}.amazonaws.com' --models /opt/umsal/models --control-function '${AWS::StackName}-cpu-control' --idle-seconds 60 --deadline-seconds ${WorkerDeadlineSeconds} --max-audio-seconds ${WorkerMaxAudioSeconds} --device ${Device} --compute-type ${ComputeType}
               - EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt LambdaEndpoint.DnsEntries]]]
                 Device: !If [UseGpu, cuda, cpu]
                 ComputeType: !If [UseGpu, float16, int8]
+                GpuEnv: !If [UseGpu, 'LD_LIBRARY_PATH=/usr/local/cuda/lib64', 'UMSAL_DEVICE=cpu']
   WorkerGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Metadata:

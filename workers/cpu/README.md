@@ -89,6 +89,10 @@ GPU 번들의 `whisper/`에는 large-v3-turbo CTranslate2 변환 자산을 넣�
 SHA-256을 이 문서에 기록한다. faster-whisper 1.2는 CUDA 12와 cuDNN 9가 필요하다.
 AMI에 없으면 번들의 `site`에 NVIDIA pip 휠을 포함한다.
 
+AMI는 루트 장치가 `/dev/xvda`인 Amazon Linux 2023 계열이어야 한다. GPU에서는 사용자 데이터가
+`LD_LIBRARY_PATH=/usr/local/cuda/lib64`를 넘긴다. 파라미터는
+`WorkerMaxAudioSeconds` < `WorkerDeadlineSeconds` < `WorkerShutdownMinutes`×60을 지킨다.
+
 배포 전 확인: 계정의 `Running On-Demand G and VT instances` 할당량(2026-11-16 4로 승인),
 GPU 인스턴스에서 짧은 녹음으로 `nvidia-smi`와 전사 스모크 테스트. 예산 필터가 동작하려면
 비용 할당 태그 `UmsalWorker`를 Billing에서 활성화한다. 업로드 API의 신고 한도(10분)와
