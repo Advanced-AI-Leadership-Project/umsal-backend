@@ -67,3 +67,29 @@ Lambda에 종료를 요청한다. 제어기는 큐를 다시 확인해 작업이
 원음·DB 접근 권한 없이 지정한 큐 집계와 지정한 그룹만 제어한다. 배포 후 `CpuGroup`의
 최소 0·최대 1과 신규 인스턴스 보호 설정을 유지한다. AWS에서 상시 남는 인터페이스
 엔드포인트는 시간 요금이 발생한다.
+
+## GPU 실행 (g4dn.xlarge)
+
+같은 스택과 큐·제어 구조를 유지하고 파라미터로 워커 서버만 바꾼다. 기본값은 기존 CPU
+동작과 같으므로 파라미터를 주지 않으면 변경이 없다.
+
+| 파라미터 | CPU 기본값 | GPU 권장값 |
+|---|---|---|
+| `WorkerInstanceType` | `m7i-flex.large` | `g4dn.xlarge` (T4, vCPU 4) |
+| `WorkerAmi` | Amazon Linux 2023 | Deep Learning Base GPU AMI (Amazon Linux 2023) |
+| `WorkerVolumeSize` | 16 | 60 |
+| `WorkerMaxAudioSeconds` | 600 | 3600 |
+| `WorkerDeadlineSeconds` | 900 | 3000 |
+| `WorkerShutdownMinutes` | 20 | 60 (프로세스 제한보다 길게) |
+| `BudgetEmail` / `MonthlyBudgetUsd` | 비움 | 알림 받을 주소 / 30 |
+
+`g4dn.xlarge`를 고르면 Launch Template이 `--device cuda --compute-type float16`으로
+Whisper를 실행한다. 화자 분리(sherpa-onnx)와 E5 임베딩은 CPU에서 그대로 실행한다.
+GPU 번들의 `whisper/`에는 large-v3-turbo CTranslate2 변환 자산을 넣고 리비전과
+SHA-256을 이 문서에 기록한다. faster-whisper 1.2는 CUDA 12와 cuDNN 9가 필요하다.
+AMI에 없으면 번들의 `site`에 NVIDIA pip 휠을 포함한다.
+
+배포 전 확인: 계정의 `Running On-Demand G and VT instances` 할당량(2026-11-16 4로 승인),
+GPU 인스턴스에서 짧은 녹음으로 `nvidia-smi`와 전사 스모크 테스트. 예산 필터가 동작하려면
+비용 할당 태그 `UmsalWorker`를 Billing에서 활성화한다. 업로드 API의 신고 한도(10분)와
+앱의 녹음 한도는 이 변경에 포함하지 않는다.
