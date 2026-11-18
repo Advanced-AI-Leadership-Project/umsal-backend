@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 엄살 MVP API 계약
-  version: 0.5.0
+  version: 0.6.0
   description: 설계 스키마. 원본은 umsal-backend contracts/(umsal-pwa e54088b의 v0.2.0에서 이관). 구현 상태는 umsal-backend
     SPEC "현재 구현 상태"를 따르며 이 문서의 operation이 실행 중임을 뜻하지 않는다. 모든 경로는 /api 아래(D2). 사용자CognitoBearer와기계AWS_IAM/SigV4
     분리. 모든긴처리는비동기.
@@ -1137,8 +1137,8 @@ paths:
     delete:
       operationId: deleteRecording
       summary: 즉시 조회 차단 후 파생 자료 삭제 예약
-      description: tombstone과취소 commit 후202. S3모든version/전사/근거/집계/checkpoint 삭제는maintenance 추적. 삭제완료 전
-        완전소거라표시하지않음.
+      description: 녹음 참여자만 요청한다. 삭제 표식과 작업 취소를 함께 기록한 뒤 202를 반환한다.
+        S3의 모든 버전과 분석 결과는 정리 작업에서 확인한다. 재요청은 같은 삭제 번호를 반환한다.
       security:
       - CognitoBearer: []
       tags:
@@ -1887,6 +1887,53 @@ paths:
             schema:
               $ref: '#/components/schemas/FailRequest'
       x-aws-authorization-type: AWS_IAM
+  /deletions:
+    get:
+      operationId: listDeletions
+      summary: 로그인한 녹음 참여자의 삭제 내역 조회
+      description: 최신 삭제 요청부터 반환한다. 사용자나 원음의 상세 정보는 응답에 포함하지 않는다.
+      security:
+      - CognitoBearer: []
+      tags:
+      - App
+      parameters:
+      - name: cursor
+        in: query
+        schema:
+          type: string
+          maxLength: 512
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionPage'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: 요청·schema 검사 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 일시 장애
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /deletions/{id}:
     get:
       operationId: getDeletionStatus
@@ -3997,6 +4044,18 @@ components:
       - status
       - live_access_blocked
       - status_url
+    DeletionPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/DeletionStatus'
+        next_cursor:
+          type: [string, 'null']
+      required: [items, next_cursor]
     DeletionStatus:
       type: object
       additionalProperties: false

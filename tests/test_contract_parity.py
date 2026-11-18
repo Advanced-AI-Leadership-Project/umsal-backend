@@ -107,7 +107,10 @@ def test_implemented_set_is_tracked(app_ops, contract_ops):
             "assignSpeaker",
             "createInvitation",
             "createUpload",
+            "deleteRecording",
             "disconnect",
+            "getDeletionStatus",
+            "listDeletions",
             "finalizeUpload",
             "getConnection",
             "getConsents",
@@ -123,7 +126,7 @@ def test_implemented_set_is_tracked(app_ops, contract_ops):
             "updateConsents",
         ]
     )
-    assert len(contract_ops) == 41
+    assert len(contract_ops) == 42
 
 
 def test_call_examples_match_running_models():

@@ -113,7 +113,7 @@ def test_run_requires_database_url():
         maintenance.run()
 
 
-def test_recording_sweep_task_does_not_run_the_purge(monkeypatch, capsys):
+def test_recording_sweep_requires_database_configuration(monkeypatch):
     monkeypatch.setattr(maintenance, "run", lambda: pytest.fail("purge must not run"))
-    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {}
-    assert json.loads(capsys.readouterr().out) == {"recordings": "not_implemented"}
+    with pytest.raises(RuntimeError, match="database is not configured"):
+        maintenance.scheduled_handler({"task": "recordings"}, None)

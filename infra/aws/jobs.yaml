@@ -143,7 +143,10 @@ Resources:
                 # (docs/mvp-recording-design.md 9). Delete and list only, no reads.
                 - Sid: DeleteRecordingVersions
                   Effect: Allow
-                  Action: s3:DeleteObjectVersion
+                  Action:
+                    - s3:DeleteObjectVersion
+                    - s3:AbortMultipartUpload
+                    - s3:ListMultipartUploadParts
                   Resource: !Sub 'arn:${AWS::Partition}:s3:::${AudioBucketName}/recordings/*'
                 - Sid: ListRecordingVersions
                   Effect: Allow
@@ -151,6 +154,12 @@ Resources:
                   Resource: !Sub 'arn:${AWS::Partition}:s3:::${AudioBucketName}'
                   Condition:
                     StringLike: {'s3:prefix': 'recordings/*'}
+                - Sid: ListRecordingMultipartUploads
+                  Effect: Allow
+                  # This action has no s3:prefix IAM condition key. The adapter
+                  # always passes the validated recording prefix and checks every key.
+                  Action: s3:ListBucketMultipartUploads
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${AudioBucketName}'
                 - Sid: DeleteRecordingResults
                   Effect: Allow
                   Action: [dynamodb:Query, dynamodb:DeleteItem]

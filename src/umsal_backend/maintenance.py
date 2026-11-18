@@ -20,6 +20,7 @@ from typing import Any
 import psycopg
 
 from umsal_backend.db import database_from_env
+from umsal_backend.deletions import sweep_deletions
 
 
 def purge_expired(connection: psycopg.Connection) -> dict[str, int]:
@@ -43,13 +44,17 @@ def run() -> dict[str, int]:
 def scheduled_handler(event: Any, _context: Any) -> dict[str, int]:
     """Lambda entry point for a scheduled rule. Logs only counts, never row contents.
 
-    The 15-minute recording sweep (jobs.yaml ``RecordingSweep``, #70) sends
-    ``{"task": "recordings"}``; until the recording sweep exists it does nothing, so the
-    daily purge keeps its own schedule.
+    The recording task retries explicit deletion requests. Automatic retention
+    expiry remains a separate feature; daily invitation cleanup has its own task.
     """
     if isinstance(event, dict) and event.get("task") == "recordings":
-        print(json.dumps({"recordings": "not_implemented"}))
-        return {}
+        target = database_from_env()
+        if target is None:
+            raise RuntimeError("Recording maintenance database is not configured.")
+        with target.connect(autocommit=True) as connection:
+            counts = sweep_deletions(connection)
+        print(json.dumps({"recordings": counts}))
+        return counts
     counts = run()
     print(json.dumps({"purged": counts}))
     return counts
