@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Private CPU analysis with queue-driven capacity of zero or one and idle shutdown.
+Description: Private CPU or GPU analysis with queue-driven capacity of zero or one and idle shutdown.
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -18,12 +18,25 @@ Parameters:
   WorkerArtifactKey: {Type: String}
   WorkerArtifactSha256: {Type: String, AllowedPattern: '^[a-f0-9]{64}$'}
   WorkerAmi: {Type: 'AWS::EC2::Image::Id'}
+  WorkerInstanceType:
+    Type: String
+    Default: m7i-flex.large
+    AllowedValues: [m7i-flex.large, g4dn.xlarge]
+    Description: g4dn.xlarge needs a GPU AMI with NVIDIA driver, CUDA 12 and cuDNN 9.
+  WorkerVolumeSize: {Type: Number, Default: 16, MinValue: 16, MaxValue: 100}
+  WorkerMaxAudioSeconds: {Type: Number, Default: 600, MinValue: 60, MaxValue: 3600}
+  WorkerDeadlineSeconds: {Type: Number, Default: 900, MinValue: 300, MaxValue: 3600}
+  WorkerShutdownMinutes: {Type: Number, Default: 20, MinValue: 10, MaxValue: 70}
+  BudgetEmail: {Type: String, Default: ''}
+  MonthlyBudgetUsd: {Type: Number, Default: 30, MinValue: 1}
   AudioBucket: {Type: String}
   ResultTable: {Type: String}
   DbHost: {Type: String}
   DbResourceId: {Type: String}
 Conditions:
   UseCalls: !Not [!Equals [!Ref CallRelayFunctionArn, '']]
+  UseGpu: !Equals [!Ref WorkerInstanceType, g4dn.xlarge]
+  UseBudget: !Not [!Equals [!Ref BudgetEmail, '']]
 Resources:
   DeadLetter:
     Type: AWS::SQS::Queue
@@ -373,7 +386,7 @@ Resources:
     Properties:
       LaunchTemplateData:
         ImageId: !Ref WorkerAmi
-        InstanceType: m7i-flex.large
+        InstanceType: !Ref WorkerInstanceType
         IamInstanceProfile: {Name: !Ref WorkerProfile}
         InstanceInitiatedShutdownBehavior: terminate
         MetadataOptions: {HttpTokens: required, HttpEndpoint: enabled}
@@ -384,7 +397,7 @@ Resources:
             Groups: [!Ref WorkerSg]
         BlockDeviceMappings:
           - DeviceName: /dev/xvda
-            Ebs: {VolumeSize: 16, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true}
+            Ebs: {VolumeSize: !Ref WorkerVolumeSize, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true}
         TagSpecifications:
           - ResourceType: volume
             Tags:
@@ -399,7 +412,7 @@ Resources:
                 trap 'systemctl poweroff' EXIT
                 umask 077
                 export AWS_DEFAULT_REGION=${AWS::Region}
-                systemd-run --unit=umsal-cpu-deadline --on-active=20m /usr/sbin/shutdown -h now
+                systemd-run --unit=umsal-cpu-deadline --on-active=${WorkerShutdownMinutes}m /usr/sbin/shutdown -h now
                 install -d -m 0755 /opt/umsal
                 cd /opt/umsal
                 timeout 180 aws s3 cp 's3://${ArtifactBucket}/${WorkerArtifactKey}' bundle.tar.gz --only-show-errors
@@ -408,8 +421,11 @@ Resources:
                 rm bundle.tar.gz
                 chmod -R a+rX /opt/umsal
                 echo UMSAL_CPU_BUNDLE_VERIFIED
-                timeout --kill-after=10 900 runuser -u ec2-user -- env PYTHONPATH=/opt/umsal/site AWS_DEFAULT_REGION=${AWS::Region} AWS_ENDPOINT_URL_LAMBDA=https://${EndpointDns} /opt/umsal/python/bin/python3 /opt/umsal/run.py --queue-url '${Queue}' --worker-api '${WorkerApi}' --audio-host '${AudioBucket}.s3.${AWS::Region}.amazonaws.com' --models /opt/umsal/models --control-function '${AWS::StackName}-cpu-control' --idle-seconds 60
+                timeout --kill-after=10 ${WorkerDeadlineSeconds} runuser -u ec2-user -- env ${GpuEnv} PYTHONPATH=/opt/umsal/site AWS_DEFAULT_REGION=${AWS::Region} AWS_ENDPOINT_URL_LAMBDA=https://${EndpointDns} /opt/umsal/python/bin/python3 /opt/umsal/run.py --queue-url '${Queue}' --worker-api '${WorkerApi}' --audio-host '${AudioBucket}.s3.${AWS::Region}.amazonaws.com' --models /opt/umsal/models --control-function '${AWS::StackName}-cpu-control' --idle-seconds 60 --deadline-seconds ${WorkerDeadlineSeconds} --max-audio-seconds ${WorkerMaxAudioSeconds} --device ${Device} --compute-type ${ComputeType}
               - EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt LambdaEndpoint.DnsEntries]]]
+                Device: !If [UseGpu, cuda, cpu]
+                ComputeType: !If [UseGpu, float16, int8]
+                GpuEnv: !If [UseGpu, 'LD_LIBRARY_PATH=/usr/local/cuda/lib64', 'UMSAL_DEVICE=cpu']
   WorkerGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Metadata:
@@ -431,6 +447,23 @@ Resources:
       Tags:
         - {Key: Project, Value: umsal-backend, PropagateAtLaunch: true}
         - {Key: UmsalWorker, Value: cpu-pilot, PropagateAtLaunch: true}
+  WorkerBudget:
+    Type: AWS::Budgets::Budget
+    Condition: UseBudget
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: GPU workers cost about five times more per hour; alert before credits run out.
+    Properties:
+      Budget:
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: {Amount: !Ref MonthlyBudgetUsd, Unit: USD}
+        CostFilters: {TagKeyValue: ['user:UmsalWorker$cpu-pilot']}
+      NotificationsWithSubscribers:
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80}
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
+        - Notification: {NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100}
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
 Outputs:
   QueueUrl: {Value: !Ref Queue}
   WorkerApi: {Value: !Ref WorkerApi}

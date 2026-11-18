@@ -1,4 +1,4 @@
-"""CPU speaker diarization, Korean transcription and text observations."""
+"""Speaker diarization, Korean transcription and text observations on CPU or CUDA."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from faster_whisper import WhisperModel
 from tokenizers import Tokenizer
 
 RATE = 16000
-MAX_SECONDS = 600
+DEFAULT_MAX_SECONDS = 600
 SPEAKERS = ("spk_1", "spk_2")
 TOPICS = {
     "WORRY": "걱정과 불안이 있다. 일이 잘 될지 마음에 걸리고 신경이 쓰인다.",
@@ -46,7 +46,7 @@ def read_channels(path: Path) -> np.ndarray:
     return np.frombuffer(data, dtype="<i2").reshape(-1, 2).astype(np.float32).T / 32768
 
 
-def read_mono(path: Path) -> np.ndarray:
+def read_mono(path: Path, max_seconds: int = DEFAULT_MAX_SECONDS) -> np.ndarray:
     """Decode local supported media, bound decoded duration and resample on CPU."""
     chunks = []
     count = 0
@@ -61,13 +61,13 @@ def read_mono(path: Path) -> np.ndarray:
                 for output in resampler.resample(frame):
                     samples = output.to_ndarray().reshape(-1)
                     count += len(samples)
-                    if count > MAX_SECONDS * RATE or not np.isfinite(samples).all():
+                    if count > max_seconds * RATE or not np.isfinite(samples).all():
                         raise InvalidSample("audio exceeds supported limits")
                     chunks.append(samples)
             for output in resampler.resample(None):
                 samples = output.to_ndarray().reshape(-1)
                 count += len(samples)
-                if count > MAX_SECONDS * RATE or not np.isfinite(samples).all():
+                if count > max_seconds * RATE or not np.isfinite(samples).all():
                     raise InvalidSample("audio exceeds supported limits")
                 chunks.append(samples)
     except (av.error.FFmpegError, ValueError, EOFError) as error:
@@ -116,8 +116,19 @@ def exclusive_intervals(segments, duration_ms: int) -> list[dict]:
 
 
 class Models:
-    def __init__(self, assets: Path):
+    def __init__(
+        self,
+        assets: Path,
+        device: str = "cpu",
+        compute_type: str = "int8",
+        max_seconds: int = DEFAULT_MAX_SECONDS,
+    ):
+        if device not in ("cpu", "cuda") or not 0 < max_seconds <= 3600:
+            raise ValueError("unsupported worker model settings")
         self.assets = assets
+        self.device = device
+        self.compute_type = compute_type
+        self.max_seconds = max_seconds
         self._whisper = None
         self._encoder = None
         self._tokenizer = None
@@ -134,8 +145,8 @@ class Models:
         if self._whisper is None:
             self._whisper = WhisperModel(
                 str(self.assets / "whisper"),
-                device="cpu",
-                compute_type="int8",
+                device=self.device,
+                compute_type=self.compute_type,
                 cpu_threads=2,
                 local_files_only=True,
             )
@@ -176,7 +187,7 @@ class Models:
         return sorted(records, key=lambda item: item["start_ms"])
 
     def recording_audio_prep(self, path: Path) -> list[dict]:
-        samples = read_mono(path)
+        samples = read_mono(path, self.max_seconds)
         if self._diarizer is None:
             config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
                 segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
@@ -199,7 +210,7 @@ class Models:
         return exclusive_intervals(segments, len(samples) * 1000 // RATE)
 
     def recording_text_analysis(self, path: Path, speaker: str, intervals: list[dict]) -> dict:
-        samples = read_mono(path)
+        samples = read_mono(path, self.max_seconds)
         turns = []
         for interval in intervals:
             if interval["speaker_id"] != speaker:

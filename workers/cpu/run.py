@@ -1,4 +1,4 @@
-"""Bounded SQS CPU worker. AWS credentials come from the instance profile."""
+"""Bounded SQS analysis worker (CPU or CUDA). AWS credentials come from the instance profile."""
 
 import argparse
 import hashlib
@@ -186,12 +186,21 @@ def main():
     parser.add_argument("--control-function")
     parser.add_argument("--idle-seconds", type=int, default=60)
     parser.add_argument("--deadline-seconds", type=int, default=900)
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--compute-type", default="int8")
+    parser.add_argument("--max-audio-seconds", type=int, default=600)
     args = parser.parse_args()
     config = Config(connect_timeout=4, read_timeout=30, retries={"total_max_attempts": 2})
     sqs = boto3.client("sqs", config=config)
     service = boto3.client("lambda", config=config)
     instance_id = instance_identity() if args.control_function else None
-    run(sqs, service, args, Models(args.models), instance_id)
+    run(
+        sqs,
+        service,
+        args,
+        Models(args.models, args.device, args.compute_type, args.max_audio_seconds),
+        instance_id,
+    )
 
 
 if __name__ == "__main__":
