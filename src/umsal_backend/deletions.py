@@ -14,7 +14,7 @@ from umsal_backend.errors import ApiError, new_request_id
 from umsal_backend.idempotency import IdempotencyKey, run_idempotent
 from umsal_backend.identity import CurrentUser
 from umsal_backend.recordings import ID_PATTERN, _decode_cursor, _encode_cursor
-from umsal_backend.storage import StorageUnavailable
+from umsal_backend.storage import StorageUnavailable, recording_key
 
 router = APIRouter(prefix="/api", tags=["App"])
 ResourceId = Annotated[str, Path(pattern=ID_PATTERN)]
@@ -131,6 +131,48 @@ def sweep_deletions(db: psycopg.Connection, *, limit: int = 25) -> dict[str, int
         ).fetchall()
     attempted = sum(process_deletion(db, row[0]) for row in pending)
     return {"deletions_attempted": attempted}
+
+
+def requeue_object_created(db: psycopg.Connection, object_key: str) -> bool:
+    """Reopen a tombstoned recording when S3 reports a later completed write.
+
+    A PUT admitted before URL expiry can finish after the grace period. Completed
+    deletion jobs therefore remain tombstones and Object Created notifications
+    schedule another verified purge. The event itself performs no storage calls.
+    """
+    parts = object_key.split("/", 4)
+    if len(parts) < 3 or parts[0] != "recordings":
+        return False
+    if parts[1] == "users":
+        if len(parts) != 5 or not parts[4]:
+            return False
+        owner, recording_id = parts[2:4]
+    else:
+        owner, recording_id = None, parts[1]
+        if not "/".join(parts[2:]):
+            return False
+    try:
+        expected_source = recording_key(recording_id, owner)
+    except ValueError:
+        return False
+    if not object_key.startswith(expected_source.removesuffix("source")):
+        return False
+    with db.transaction():
+        # Wait for a concurrent purge rather than skipping its lock: the event
+        # must durably reopen the job after that purge commits, never get lost.
+        row = db.execute(
+            "SELECT s3_key, deleted_at FROM recordings WHERE id = %s FOR UPDATE",
+            (recording_id,),
+        ).fetchone()
+        if row is None or row[1] is None or row[0] != expected_source:
+            return False
+        reopened = db.execute(
+            "UPDATE deletion_jobs SET live_deletion_status = 'IN_PROGRESS', "
+            "live_deleted_at = NULL, last_error_code = NULL, "
+            "next_attempt_at = clock_timestamp() WHERE recording_id = %s RETURNING id",
+            (recording_id,),
+        ).fetchone()
+    return reopened is not None
 
 
 @router.delete(

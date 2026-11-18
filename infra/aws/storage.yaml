@@ -69,6 +69,10 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
       VersioningConfiguration: {Status: Enabled}
+      NotificationConfiguration:
+        # The jobs stack filters this bucket's Object Created events and
+        # re-queues cleanup only for recordings already marked deleted.
+        EventBridgeConfiguration: {EventBridgeEnabled: true}
       CorsConfiguration:
         CorsRules:
           # Browser upload with a presigned PUT (docs/mvp-recording-design.md 8). The

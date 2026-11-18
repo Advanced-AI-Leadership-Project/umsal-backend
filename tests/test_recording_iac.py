@@ -125,3 +125,23 @@ def test_recording_sweep_runs_every_15_minutes_only_with_recordings():
     assert schedule["Condition"] == "UseRecordings"
     assert schedule["Properties"]["ScheduleExpression"] == "rate(15 minutes)"
     assert schedule["Properties"]["Target"]["Input"] == '{"task": "recordings"}'
+
+
+def test_late_recording_upload_event_is_scoped_to_maintenance():
+    bucket = _load("storage.yaml")["Resources"]["AudioBucket"]["Properties"]
+    assert bucket["NotificationConfiguration"]["EventBridgeConfiguration"]["EventBridgeEnabled"]
+    resources = _load("jobs.yaml")["Resources"]
+    rule = resources["RecordingObjectCreated"]
+    permission = resources["RecordingObjectCreatedInvoke"]
+    assert rule["Condition"] == permission["Condition"] == "UseRecordings"
+    match = rule["Properties"]["EventPattern"]
+    assert match["source"] == ["aws.s3"]
+    assert match["detail-type"] == ["Object Created"]
+    assert match["detail"] == {
+        "bucket": {"name": [{"Ref": "AudioBucketName"}]},
+        "object": {"key": [{"prefix": "recordings/"}]},
+    }
+    assert rule["Properties"]["Targets"][0]["Arn"] == {"GetAtt": "MaintenanceFunction.Arn"}
+    assert permission["Properties"]["SourceArn"] == {"GetAtt": "RecordingObjectCreated.Arn"}
+    assert permission["Properties"]["SourceAccount"] == {"Ref": "AWS::AccountId"}
+    assert permission["Properties"]["Principal"] == "events.amazonaws.com"

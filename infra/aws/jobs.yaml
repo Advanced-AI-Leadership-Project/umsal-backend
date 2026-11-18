@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   DRAFT (not deployed, #42). UMSAL backend jobs inside the private VPC (stack
   umsal-backend-jobs): the migration Lambda (operator-invoked, not behind API Gateway)
-  and the daily maintenance purge (EventBridge Scheduler). Both use RDS PostgreSQL IAM auth.
+  and maintenance (daily purge, requested recording deletion, late uploads). Both use RDS PostgreSQL IAM auth.
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -279,6 +279,43 @@ Resources:
         RoleArn: !GetAtt SchedulerRole.Arn
         Input: '{"task": "recordings"}'
         RetryPolicy: {MaximumRetryAttempts: 0}
+  RecordingObjectCreated:
+    Type: AWS::Events::Rule
+    Condition: UseRecordings
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: A PUT started before signing expiry may finish after the last deletion sweep.
+        must: [Match this project's audio bucket and recording prefix, No audio body in events]
+    Properties:
+      Description: Requeue cleanup for objects written after a recording was deleted
+      EventPattern:
+        source: [aws.s3]
+        detail-type: [Object Created]
+        account: [!Ref AWS::AccountId]
+        detail:
+          bucket:
+            name: [!Ref AudioBucketName]
+          object:
+            key:
+              - prefix: 'recordings/'
+      State: ENABLED
+      Targets:
+        - Id: RecordingMaintenance
+          Arn: !GetAtt MaintenanceFunction.Arn
+  RecordingObjectCreatedInvoke:
+    Type: AWS::Lambda::Permission
+    Condition: UseRecordings
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Deliver filtered object creation events to the private maintenance function.
+        must: [Only the recording-object rule may invoke this way]
+    Properties:
+      FunctionName: !Ref MaintenanceFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RecordingObjectCreated.Arn
+      SourceAccount: !Ref AWS::AccountId
+
 Outputs:
   MigrationFunctionName:
     Value: !Ref MigrationFunction
