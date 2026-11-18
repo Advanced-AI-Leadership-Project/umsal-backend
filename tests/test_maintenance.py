@@ -113,7 +113,38 @@ def test_run_requires_database_url():
         maintenance.run()
 
 
-def test_recording_sweep_task_does_not_run_the_purge(monkeypatch, capsys):
+def test_recording_sweep_requires_database_configuration(monkeypatch):
     monkeypatch.setattr(maintenance, "run", lambda: pytest.fail("purge must not run"))
-    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {}
-    assert json.loads(capsys.readouterr().out) == {"recordings": "not_implemented"}
+    with pytest.raises(RuntimeError, match="database is not configured"):
+        maintenance.scheduled_handler({"task": "recordings"}, None)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"source": "other", "detail-type": "Object Created"},
+        {"source": "aws.s3", "detail-type": "Object Deleted"},
+        {"source": "aws.s3", "detail-type": "Object Created", "detail": None},
+        {"source": "aws.s3", "detail-type": "Object Created", "detail": {}},
+        {
+            "source": "aws.s3",
+            "detail-type": "Object Created",
+            "detail": {"bucket": {"name": "other-bucket"}, "object": {"key": "source"}},
+        },
+        {
+            "source": "aws.s3",
+            "detail-type": "Object Created",
+            "detail": {"bucket": {"name": "synthetic-bucket"}, "object": {"key": None}},
+        },
+        {
+            "source": "aws.s3",
+            "detail-type": "Object Created",
+            "detail": {"bucket": {"name": "synthetic-bucket"}, "object": {}},
+        },
+    ],
+)
+def test_object_events_outside_the_configured_bucket_are_ignored(event, monkeypatch, capsys):
+    monkeypatch.setenv("AUDIO_BUCKET", "synthetic-bucket")
+    monkeypatch.setattr(maintenance, "run", lambda: pytest.fail("event must not run daily purge"))
+    assert maintenance.scheduled_handler(event, None) == {"deletions_requeued": 0}
+    assert json.loads(capsys.readouterr().out) == {"recordings": {"deletions_requeued": 0}}

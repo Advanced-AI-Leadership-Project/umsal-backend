@@ -84,7 +84,10 @@ def test_audio_bucket_allows_only_presigned_browser_puts():
             "RecordingSweep",
             {
                 "s3:DeleteObjectVersion",
+                "s3:AbortMultipartUpload",
+                "s3:ListMultipartUploadParts",
                 "s3:ListBucketVersions",
+                "s3:ListBucketMultipartUploads",
                 "dynamodb:Query",
                 "dynamodb:DeleteItem",
             },
@@ -100,10 +103,16 @@ def test_storage_permissions_are_scoped(template, role, policy, actions):
         granted |= names
         resource = statement["Resource"]["Sub"]
         assert "*" not in resource.replace("/recordings/*", "")
-        if any(name.startswith("s3:") and name != "s3:ListBucketVersions" for name in names):
+        bucket_actions = {"s3:ListBucketVersions", "s3:ListBucketMultipartUploads"}
+        if any(name.startswith("s3:") and name not in bucket_actions for name in names):
             assert resource.endswith("/recordings/*")
         if "s3:ListBucketVersions" in names:
             assert statement["Condition"] == {"StringLike": {"s3:prefix": "recordings/*"}}
+        if "s3:ListBucketMultipartUploads" in names:
+            assert resource.endswith("${AudioBucketName}")
+            # AWS does not support s3:prefix for this action. Delete/abort stay
+            # restricted to recordings/*, and the adapter validates exact prefixes.
+            assert "Condition" not in statement
         if any(name.startswith("dynamodb:") for name in names):
             assert statement["Condition"] == {
                 "ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["REC#*"]}
@@ -116,3 +125,23 @@ def test_recording_sweep_runs_every_15_minutes_only_with_recordings():
     assert schedule["Condition"] == "UseRecordings"
     assert schedule["Properties"]["ScheduleExpression"] == "rate(15 minutes)"
     assert schedule["Properties"]["Target"]["Input"] == '{"task": "recordings"}'
+
+
+def test_late_recording_upload_event_is_scoped_to_maintenance():
+    bucket = _load("storage.yaml")["Resources"]["AudioBucket"]["Properties"]
+    assert bucket["NotificationConfiguration"]["EventBridgeConfiguration"]["EventBridgeEnabled"]
+    resources = _load("jobs.yaml")["Resources"]
+    rule = resources["RecordingObjectCreated"]
+    permission = resources["RecordingObjectCreatedInvoke"]
+    assert rule["Condition"] == permission["Condition"] == "UseRecordings"
+    match = rule["Properties"]["EventPattern"]
+    assert match["source"] == ["aws.s3"]
+    assert match["detail-type"] == ["Object Created"]
+    assert match["detail"] == {
+        "bucket": {"name": [{"Ref": "AudioBucketName"}]},
+        "object": {"key": [{"prefix": "recordings/"}]},
+    }
+    assert rule["Properties"]["Targets"][0]["Arn"] == {"GetAtt": "MaintenanceFunction.Arn"}
+    assert permission["Properties"]["SourceArn"] == {"GetAtt": "RecordingObjectCreated.Arn"}
+    assert permission["Properties"]["SourceAccount"] == {"Ref": "AWS::AccountId"}
+    assert permission["Properties"]["Principal"] == "events.amazonaws.com"

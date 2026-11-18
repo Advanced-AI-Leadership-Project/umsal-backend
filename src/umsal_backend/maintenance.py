@@ -14,12 +14,14 @@ Run on AWS later: EventBridge Scheduler -> Lambda handler ``scheduled_handler``
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
 import psycopg
 
 from umsal_backend.db import database_from_env
+from umsal_backend.deletions import requeue_object_created, sweep_deletions
 
 
 def purge_expired(connection: psycopg.Connection) -> dict[str, int]:
@@ -43,16 +45,49 @@ def run() -> dict[str, int]:
 def scheduled_handler(event: Any, _context: Any) -> dict[str, int]:
     """Lambda entry point for a scheduled rule. Logs only counts, never row contents.
 
-    The 15-minute recording sweep (jobs.yaml ``RecordingSweep``, #70) sends
-    ``{"task": "recordings"}``; until the recording sweep exists it does nothing, so the
-    daily purge keeps its own schedule.
+    The recording task retries explicit deletion requests and audits a small daily
+    subset of completed tombstones as a fallback for lost object events.
+    Automatic retention expiry is separate; daily invitation cleanup has its own task.
     """
+    if isinstance(event, dict) and ("source" in event or "detail-type" in event):
+        key = _object_created_key(event)
+        counts = {"deletions_requeued": 0}
+        if key is not None:
+            target = database_from_env()
+            if target is None:
+                raise RuntimeError("Recording maintenance database is not configured.")
+            with target.connect(autocommit=True) as connection:
+                counts["deletions_requeued"] = int(requeue_object_created(connection, key))
+        print(json.dumps({"recordings": counts}))
+        return counts
     if isinstance(event, dict) and event.get("task") == "recordings":
-        print(json.dumps({"recordings": "not_implemented"}))
-        return {}
+        target = database_from_env()
+        if target is None:
+            raise RuntimeError("Recording maintenance database is not configured.")
+        with target.connect(autocommit=True) as connection:
+            counts = sweep_deletions(connection)
+        print(json.dumps({"recordings": counts}))
+        return counts
     counts = run()
     print(json.dumps({"purged": counts}))
     return counts
+
+
+def _object_created_key(event: dict) -> str | None:
+    """Accept only this stack's EventBridge S3 object-created event shape."""
+    if event.get("source") != "aws.s3" or event.get("detail-type") != "Object Created":
+        return None
+    detail = event.get("detail")
+    if not isinstance(detail, dict):
+        return None
+    bucket, object_ = detail.get("bucket"), detail.get("object")
+    configured = os.environ.get("AUDIO_BUCKET", "").strip()
+    if not configured or not isinstance(bucket, dict) or bucket.get("name") != configured:
+        return None
+    if not isinstance(object_, dict):
+        return None
+    key = object_.get("key")
+    return key if isinstance(key, str) and 0 < len(key) <= 1024 else None
 
 
 def main() -> None:

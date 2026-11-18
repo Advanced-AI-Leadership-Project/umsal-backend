@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "deletion_id": "del_example",
+      "scope": "RECORDING",
+      "live_access_blocked": true,
+      "live_deletion_status": "COMPLETED",
+      "live_deleted_at": "2026-11-18T05:25:00Z",
+      "backup_status": "RETAINED_PENDING_EXPIRY",
+      "backup_expires_at": null,
+      "retryable": false,
+      "last_error_code": null
+    }
+  ],
+  "next_cursor": null
+}

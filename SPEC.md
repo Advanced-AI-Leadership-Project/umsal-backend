@@ -22,7 +22,7 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 
 | 저장소 | 저장 내용 | 선택 이유 |
 |---|---|---|
-| RDS PostgreSQL | 사용자·가족 관계·동의 grant·공유 scope, 녹음(recordings)·분석 작업(analysis_jobs)·화자 확인(speaker_assignments)·outbox·멱등 키・통화(voice_calls). 삭제 작업(deletion_jobs)은 목표 범위 | 관계와 제약(외래 키·유일성)이 필요하다. 동의 확인과 작업 상태 확정을 한 트랜잭션으로 묶어야 철회 직후의 작업 상태 확정을 막을 수 있다(결과 본문 경합은 아래 불변조건 참조) |
+| RDS PostgreSQL | 사용자·가족 관계·동의 grant·공유 scope, 녹음(recordings)·분석 작업(analysis_jobs)·화자 확인(speaker_assignments)·outbox·멱등 키・통화(voice_calls). 한 건 삭제 작업(deletion_jobs) | 관계와 제약(외래 키·유일성)이 필요하다. 동의 확인과 작업 상태 확정을 한 트랜잭션으로 묶어야 철회 직후의 작업 상태 확정을 막을 수 있다(결과 본문 경합은 아래 불변조건 참조) |
 | DynamoDB | 현재 CPU 결과 본문, 별도 통화 신호 테이블. 발화·관찰·주간 집계의 세부 분해 저장은 목표 설계 | 양이 많고 키로 읽는 결과 본문. 어떤 결과가 유효한지는 PostgreSQL의 작업 상태가 정한다 |
 | S3 | 원음 파일·작업 산출물(작업자는 API가 허용한 작업 전용 출력 경로에만 쓴다, [API 계약 초안](docs/api-contract.md) D9) | DynamoDB 항목 400KB 제한을 넘는 파일. 기한·모든 버전·파생 산출물의 물리 삭제는 후속 정책/구현과 대조해야 한다 |
 
@@ -48,7 +48,7 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 
 ## 현재 구현 상태
 
-2026-11-17 main `e0b14a9`의 소스 기준이다. 과거 배포 근거는 [배포 기록](docs/aws-deployment.md)과 [통화 문서](docs/voice-calls.md)로 분리한다. 이번 문서 정리는 AWS 현재 설정·실기기를 새로 검증하지 않았다.
+현재 소스 기준이다. 과거 배포 근거는 [배포 기록](docs/aws-deployment.md)과 [통화 문서](docs/voice-calls.md)로 분리한다. 이번 문서 정리는 AWS 현재 설정·실기기를 새로 검증하지 않았다.
 
 | 항목 | 구현·남은 범위 |
 |---|---|
@@ -61,9 +61,10 @@ PWA 업무 API의 목표 계약과 현재 차이·결정 항목은 [API 계약 �
 | CPU 자동 기동 | `cpu-analysis.yaml`·`worker_control.py`: 최대 1대, 처리 중 축소 보호, 작업 후 유휴 종료. 배포된 실제 용량/정상 종료는 별도 AWS 확인이 필요하다 |
 | 전경 1:1 통화 | `calls.py` 9개 operation·RDS 상태·별도 DynamoDB 신호·coturn. 분석과 별도이며 통화 미디어를 저장하지 않는다. 화면 잠금/백그라운드 수신·실제 단말 통화는 별도 범위 |
 | 데이터·IaC | PostgreSQL 마이그레이션 `0001`~`0009`, RDS/S3/DynamoDB·인증·CPU·통화 CloudFormation. 코드에 있는 마이그레이션과 현재 운영 DB 적용 버전을 혼동하지 않는다 |
-| API 계약 | 원본 v0.5.0, 33 paths / 41 operations. 공개 FastAPI `/api` 구현은 health 2개 포함 27개. 내부 claim/heartbeat/complete/fail은 IAM Lambda 경로이며 목표 HTTP operation 4개를 구현한 것으로 세지 않는다. [상세 대조](docs/api-contract.md#2-현재-구현과-원안의-차이) |
+| 녹음 삭제 | 참여자의 요청 커밋 즉시 기록·결과·작업 조회를 차단한다. 예약 정리는 원음 버전과 결과를 제거하고 남은 자료를 대조한다. 삭제 내역은 로그인한 참여자가 확인한다. |
+| API 계약 | 원본 v0.6.0, 34 paths / 42 operations. 공개 FastAPI `/api` 구현은 health 2개 포함 30개. 내부 claim/heartbeat/complete/fail은 IAM Lambda 경로이며 목표 HTTP operation 4개를 구현한 것으로 세지 않는다. [상세 대조](docs/api-contract.md#2-현재-구현과-원안의-차이) |
 | PWA 연동 | PWA의 계정·가족·동의·접수·화자/결과·통화 클라이언트가 이 API를 호출한다. PWA 로컬 health/push scaffold는 업무 API와 다르다 |
-| 후속 기능 | 녹음 DELETE·삭제 상태/일괄 삭제, 주간 집계, 설정/기기 등록, 피드백, 공개 retry 경로. `maintenance.py`의 녹음 task는 `not_implemented`. 철회 후 비노출·작업 fencing과 원음/결과/백업 물리 삭제를 구분한다 |
+| 후속 기능 | 자동 보관 만료, 백업 만료 확인, 일괄 삭제, 주간 집계, 설정/기기 등록, 피드백, 공개 retry 경로. 철회 후 비노출·작업 fencing과 원음/결과/백업 물리 삭제를 구분한다 |
 
 목표 설계를 구현 완료로 보고하지 않는다. 통화 DELETE는 통화 종료이며 녹음 DELETE가 아니다. 오래된 이슈는 수용 기준 전체를 대조한 뒤 닫는다.
 

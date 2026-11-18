@@ -25,7 +25,7 @@ DATABASE_URL=postgresql://umsal:umsal_local@127.0.0.1:5434/umsal_backend make ap
 make db-down      # 컨테이너 중지(데이터 볼륨은 유지)
 ```
 
-만료된 멱등 기록·초대 정리: `DATABASE_URL=... uv run python -m umsal_backend.maintenance`. 주기 실행 IaC는 `infra/aws/jobs.yaml`에 있다. 이 명령의 녹음 정리 task는 아직 `not_implemented`이며 원음·결과 삭제를 수행하지 않는다.
+만료된 멱등 기록·초대 정리: `DATABASE_URL=... uv run python -m umsal_backend.maintenance`. 주기 실행 IaC는 `infra/aws/jobs.yaml`에 있다. 예약된 녹음 정리 작업은 접수된 한 건 삭제를 처리한다.
 
 `make`가 없는 Windows에서는 `docker compose up -d --wait db`, `uv run alembic upgrade head`처럼 Makefile의 명령을 직접 실행하고 `DATABASE_URL`(통합 테스트는 `TEST_DATABASE_URL`)을 환경 변수로 지정한다. `POSTGRES_PORT`·`POSTGRES_USER`·`POSTGRES_PASSWORD`를 바꿨다면 `make db-migrate LOCAL_DATABASE_URL=...`처럼 같은 값을 넘긴다. Alembic·SQLAlchemy는 개발 의존성이라 Lambda zip에 들어가지 않는다. `DATABASE_URL`이 없으면 API는 DB에 접속하지 않고 ready의 `checks.aurora`는 `not_configured`다. 새 마이그레이션은 `uv run alembic revision -m "설명"`으로 만들고 SQL을 직접 쓴다. 운영 RDS 적용 전에는 `uv run alembic upgrade head --sql`로 SQL을 검토한다.
 
@@ -45,7 +45,7 @@ PR 검사·자동 병합 구조는 [검증 하네스](docs/verification-harness.
 
 AWS 배포 절차와 확인 기록은 [백엔드 API AWS 배포](docs/aws-deployment.md)를 따른다.
 
-현재 main에는 Cognito 인증·가족/동의·업로드/finalize·작업/녹음 조회·화자 확인·권한별 결과 조회·전경 통화가 구현되어 있다. 분석은 기존 `stub-1` 합성 대역과 실제 CPU `cpu-1`/`cpu-2`를 구분한다. 새 원음 키는 내부 사용자별로 분리하며 기존 키의 재발급·finalize도 유지한다. 복원 당시의 배포 소스/설정은 [운영 코드·설정 복원 기록](docs/deployed-mobile-restoration.md), 현재 API별 구현/목표 차이는 [계약 안내](docs/api-contract.md#2-현재-구현과-원안의-차이)를 따른다. 녹음 물리 삭제·삭제 상태·주간 집계·제품 자동 알림은 후속 범위다.
+현재 main에는 Cognito 인증·가족/동의·업로드/finalize·작업/녹음 조회·화자 확인·권한별 결과 조회·전경 통화가 구현되어 있다. 분석은 기존 `stub-1` 합성 대역과 실제 CPU `cpu-1`/`cpu-2`를 구분한다. 새 원음 키는 내부 사용자별로 분리하며 기존 키의 재발급·finalize도 유지한다. 복원 당시의 배포 소스/설정은 [운영 코드·설정 복원 기록](docs/deployed-mobile-restoration.md), 현재 API별 구현/목표 차이는 [계약 안내](docs/api-contract.md#2-현재-구현과-원안의-차이)를 따른다. 녹음 한 건 삭제는 요청 시 조회 차단, 기존 예약 작업의 원음·결과 소거, 로그인 후 상태 조회를 연결한다. 자동 보관 만료·백업 만료 확인·주간 집계·제품 자동 알림은 후속 범위다.
 
 CPU 분석은 동의한 통화의 WAV·MP3·M4A를 모노 화자 분리와 화자 확인 후 처리한다. 입력 범위·모델 리비전·활성화 절차는 [CPU 분석](workers/cpu/README.md)을 따른다.
 CPU 워커는 분석 큐에 맞춰 0~1대로 자동 기동하며, 처리 후 60초간 새 작업이 없으면 종료한다.

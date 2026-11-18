@@ -13,6 +13,7 @@ from umsal_backend import (
     calls,
     connections,
     consents,
+    deletions,
     disconnect,
     identity,
     invitations,
@@ -92,6 +93,7 @@ def create_app(
     app.include_router(labels.router)
     app.include_router(recordings.router)
     app.include_router(assignments.router)
+    app.include_router(deletions.router)
     app.include_router(calls.router)
     return app
 

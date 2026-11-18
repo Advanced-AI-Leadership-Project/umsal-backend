@@ -1163,6 +1163,419 @@ def test_cpu_outbox_claim_confirm_commit_and_revoke(
     _assert_error(_result(client, rec, "alice"), 403, "CONSENT_REQUIRED")
 
 
+def _object_created_event(key, bucket="synthetic-bucket"):
+    return {
+        "source": "aws.s3",
+        "detail-type": "Object Created",
+        "detail": {"bucket": {"name": bucket}, "object": {"key": key}},
+    }
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("suffix", ["source", "jobs/job_synthetic/artifact.json"])
+def test_late_object_event_reopens_completed_deletion_without_storage_calls(
+    client, consented, migrated_db, monkeypatch, legacy, suffix
+):
+    from umsal_backend import deletions, maintenance
+
+    rec = _upload(client, consented).json()["recording_id"]
+    source = f"recordings/{rec}/source" if legacy else _source_key(client, rec)
+    if legacy:
+        with psycopg.connect(migrated_db) as db:
+            db.execute("UPDATE recordings SET s3_key=%s WHERE id=%s", (source, rec))
+    monkeypatch.setenv("DATABASE_URL", migrated_db)
+    monkeypatch.setenv("AUDIO_BUCKET", "synthetic-bucket")
+    # A normal recording must never become a deletion job just because an object arrived.
+    assert maintenance.scheduled_handler(_object_created_event(source), None) == {
+        "deletions_requeued": 0
+    }
+    deletion_id = _delete(client, rec).json()["deletion_id"]
+    objects = {source}
+
+    def purge(*_args):
+        objects.clear()
+
+    monkeypatch.setattr(deletions, "purge_recording_storage", purge)
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET sweep_after=now()-interval '1 hour' WHERE id=%s",
+            (deletion_id,),
+        )
+        assert deletions.process_deletion(db, deletion_id)
+    assert _deletion_status(client, deletion_id).json()["live_deletion_status"] == "COMPLETED"
+    late_key = source.removesuffix("source") + suffix
+    objects.add(late_key)  # A write admitted earlier finished after COMPLETED.
+    monkeypatch.setattr(
+        deletions, "purge_recording_storage", lambda *_args: pytest.fail("event must not purge")
+    )
+    assert maintenance.scheduled_handler(_object_created_event(late_key, "other-bucket"), None) == {
+        "deletions_requeued": 0
+    }
+    assert _deletion_status(client, deletion_id).json()["live_deletion_status"] == "COMPLETED"
+    for _ in range(2):  # Duplicate notifications are safe and do not call AWS.
+        assert maintenance.scheduled_handler(_object_created_event(late_key), None) == {
+            "deletions_requeued": 1
+        }
+    reopened = _deletion_status(client, deletion_id).json()
+    assert reopened["live_deletion_status"] == "IN_PROGRESS"
+    assert reopened["live_deleted_at"] is None and reopened["live_access_blocked"]
+    monkeypatch.setattr(deletions, "purge_recording_storage", purge)
+    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {"deletions_attempted": 1}
+    assert not objects
+    assert _deletion_status(client, deletion_id).json()["live_deletion_status"] == "COMPLETED"
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        for wrong in (
+            f"recordings/users/usr_wrong/{rec}/source",
+            f"recordings/{rec}suffix/source",
+            "unrelated/file",
+            "recordings/users/source",
+            "recordings/../../source",
+        ):
+            assert not deletions.requeue_object_created(db, wrong)
+    assert _deletion_status(client, deletion_id).json()["live_deletion_status"] == "COMPLETED"
+
+
+def test_object_event_waits_for_a_concurrent_purge_and_remains_due(
+    client, consented, migrated_db, monkeypatch, run_concurrently
+):
+    import threading
+
+    from umsal_backend import deletions, maintenance
+
+    rec = _upload(client, consented).json()["recording_id"]
+    source = _source_key(client, rec)
+    deletion_id = _delete(client, rec).json()["deletion_id"]
+    with psycopg.connect(migrated_db) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET sweep_after=now()-interval '1 hour' WHERE id=%s",
+            (deletion_id,),
+        )
+    started, notifying = threading.Event(), threading.Event()
+
+    def purge(*_args):
+        started.set()
+        assert notifying.wait(5)
+
+    monkeypatch.setattr(deletions, "purge_recording_storage", purge)
+    monkeypatch.setenv("DATABASE_URL", migrated_db)
+    monkeypatch.setenv("AUDIO_BUCKET", "synthetic-bucket")
+
+    def process():
+        with psycopg.connect(migrated_db, autocommit=True) as db:
+            assert deletions.process_deletion(db, deletion_id)
+
+    def notify():
+        assert started.wait(5)
+        notifying.set()
+        assert maintenance.scheduled_handler(_object_created_event(source), None) == {
+            "deletions_requeued": 1
+        }
+
+    run_concurrently(process, notify)
+    reopened = _deletion_status(client, deletion_id).json()
+    assert reopened["live_deletion_status"] == "IN_PROGRESS" and reopened["live_deleted_at"] is None
+    monkeypatch.setattr(deletions, "purge_recording_storage", lambda *_args: None)
+    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {"deletions_attempted": 1}
+    assert _deletion_status(client, deletion_id).json()["live_deletion_status"] == "COMPLETED"
+
+
+def _completed_deletion(client, connection_id, database_url, index=0):
+    from umsal_backend import deletions
+
+    rec = _upload(client, connection_id, key=f"audit-upload-{index}").json()["recording_id"]
+    deletion_id = _delete(client, rec, key=f"audit-delete-{index}").json()["deletion_id"]
+    with psycopg.connect(database_url, autocommit=True) as db:
+        db.execute(
+            "UPDATE upload_sessions SET expires_at=now()-interval '1 hour' WHERE recording_id=%s",
+            (rec,),
+        )
+        db.execute(
+            "UPDATE deletion_jobs SET sweep_after=now()-interval '1 hour' WHERE id=%s",
+            (deletion_id,),
+        )
+        assert deletions.process_deletion(db, deletion_id)
+    return rec, deletion_id
+
+
+def test_completed_fallback_cleans_a_late_object_without_an_event_and_retries_failure(
+    client, consented, migrated_db, monkeypatch
+):
+    from umsal_backend import deletions, maintenance
+
+    objects = set()
+
+    def purge(*_args):
+        objects.clear()
+
+    monkeypatch.setattr(deletions, "purge_recording_storage", purge)
+    rec, deletion_id = _completed_deletion(client, consented, migrated_db)
+    completed_at = _deletion_status(client, deletion_id).json()["live_deleted_at"]
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        assert db.execute(
+            "SELECT next_attempt_at > clock_timestamp()+interval '23 hours' "
+            "FROM deletion_jobs WHERE id=%s",
+            (deletion_id,),
+        ).fetchone() == (True,)
+    objects.add(_source_key(client, rec))  # Late write, with its event deliberately omitted.
+    monkeypatch.setenv("DATABASE_URL", migrated_db)
+    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {"deletions_attempted": 0}
+    assert objects
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET next_attempt_at=now()-interval '1 second' WHERE id=%s",
+            (deletion_id,),
+        )
+    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {"deletions_attempted": 1}
+    assert not objects
+    assert _deletion_status(client, deletion_id).json()["live_deleted_at"] == completed_at
+
+    def unavailable(*_args):
+        raise StorageUnavailable
+
+    monkeypatch.setattr(deletions, "purge_recording_storage", unavailable)
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET next_attempt_at=now()-interval '1 second' WHERE id=%s",
+            (deletion_id,),
+        )
+    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {"deletions_attempted": 1}
+    failed = _deletion_status(client, deletion_id).json()
+    assert failed["live_deletion_status"] == "FAILED" and failed["live_deleted_at"] is None
+    assert failed["last_error_code"] == "TEMPORARY_STORAGE_ERROR" and failed["retryable"]
+    monkeypatch.setattr(deletions, "purge_recording_storage", purge)
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET next_attempt_at=now()-interval '1 second' WHERE id=%s",
+            (deletion_id,),
+        )
+        assert deletions.sweep_deletions(db) == {"deletions_attempted": 1}
+    assert _deletion_status(client, deletion_id).json()["live_deletion_status"] == "COMPLETED"
+
+
+def test_completed_audits_are_bounded_and_unfinished_jobs_run_first(
+    client, consented, migrated_db, monkeypatch
+):
+    from umsal_backend import deletions
+
+    calls = []
+    monkeypatch.setattr(deletions, "purge_recording_storage", lambda rec, key: calls.append(rec))
+    completed = [_completed_deletion(client, consented, migrated_db, index) for index in range(3)]
+    pending = _upload(client, consented, key="priority-upload").json()["recording_id"]
+    _delete(client, pending, key="priority-delete")
+    calls.clear()
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET next_attempt_at=now()-interval '1 second' "
+            "WHERE live_deletion_status='COMPLETED'"
+        )
+        assert deletions.sweep_deletions(db) == {"deletions_attempted": 3}
+        assert calls == [pending, completed[0][0], completed[1][0]]
+        calls.clear()
+        assert deletions.sweep_deletions(db) == {"deletions_attempted": 1}
+        assert calls == [completed[2][0]]
+
+
+def test_completed_audit_budget_stops_starting_more_storage_attempts(
+    client, consented, migrated_db, monkeypatch
+):
+    from umsal_backend import deletions
+
+    calls = []
+    monkeypatch.setattr(deletions, "purge_recording_storage", lambda rec, key: calls.append(rec))
+    for index in range(2):
+        _completed_deletion(client, consented, migrated_db, index)
+    calls.clear()
+    clock = iter([0.0, 0.0, 11.0])
+    monkeypatch.setattr(deletions, "monotonic", lambda: next(clock))
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET next_attempt_at=now()-interval '1 second' "
+            "WHERE live_deletion_status='COMPLETED'"
+        )
+        assert deletions.sweep_deletions(db) == {"deletions_attempted": 1}
+    assert len(calls) == 1
+
+
+def _delete(client, recording_id, sub="alice", key="delete-recording-1"):
+    return client.delete(f"/api/recordings/{recording_id}", headers=_h(sub, key))
+
+
+def _deletion_status(client, deletion_id, sub="alice"):
+    return client.get(f"/api/deletions/{deletion_id}", headers=_h(sub))
+
+
+def test_delete_blocks_reads_without_api_storage_permissions(
+    client, consented, audio, migrated_db, monkeypatch, contract_schema
+):
+    from umsal_backend import deletions
+
+    ticket = _upload(client, consented).json()
+    rec = ticket["recording_id"]
+    audio.put(_source_key(client, rec), "v1")
+    job_id = _finalize(client, ticket["upload_id"]).json()["resource_id"]
+    monkeypatch.setattr(
+        deletions, "purge_recording_storage", lambda *args: pytest.fail("API must not purge")
+    )
+    _assert_error(_delete(client, rec, "carol"), 404, "NOT_FOUND")
+    accepted = _delete(client, rec)
+    assert accepted.status_code == 202, accepted.text
+    contract_schema("DeletionAccepted").validate(accepted.json())
+    deletion_id = accepted.json()["deletion_id"]
+    assert _delete(client, rec).json() == accepted.json()
+    assert _delete(client, rec, "bob", "another-delete-key").json()["deletion_id"] == deletion_id
+    for path in (f"/api/recordings/{rec}", f"/api/jobs/{job_id}", f"/api/recordings/{rec}/result"):
+        _assert_error(client.get(path, headers=_h("alice")), 404, "NOT_FOUND")
+    assert client.get("/api/recordings", headers=_h("bob")).json()["items"] == []
+    assert _finalize(client, ticket["upload_id"], key="deleted-finalize").status_code == 404
+    assert _upload(client, consented).status_code == 409  # no replacement presigned PUT
+    status = _deletion_status(client, deletion_id).json()
+    contract_schema("DeletionStatus").validate(status)
+    assert status["live_deletion_status"] == "PENDING" and status["live_access_blocked"]
+    _assert_error(_deletion_status(client, deletion_id, "carol"), 404, "NOT_FOUND")
+    assert client.get("/api/deletions", headers=_h("carol")).json()["items"] == []
+    with psycopg.connect(migrated_db) as db:
+        assert db.execute(
+            "SELECT deleted_at IS NOT NULL, filename, speaker_intervals "
+            "FROM recordings WHERE id=%s",
+            (rec,),
+        ).fetchone() == (True, None, None)
+        assert db.execute("SELECT count(*) FROM deletion_jobs").fetchone() == (1,)
+
+
+def test_delete_is_available_to_participants_after_disconnect(client, consented):
+    ticket = _upload(client, consented).json()
+    client.delete(f"/api/connections/{consented}", headers=_h("bob", "disconnect-delete"))
+    accepted = _delete(client, ticket["recording_id"], "bob")
+    assert accepted.status_code == 202, accepted.text
+    assert _deletion_status(client, accepted.json()["deletion_id"], "alice").status_code == 200
+
+
+def test_deletion_requires_late_put_resweep_and_preserves_unknown_backup_expiry(
+    client, consented, migrated_db, monkeypatch, contract_schema
+):
+    from umsal_backend import deletions, maintenance
+
+    ticket = _upload(client, consented).json()
+    rec = ticket["recording_id"]
+    deletion_id = _delete(client, rec).json()["deletion_id"]
+    purged = []
+    monkeypatch.setattr(deletions, "purge_recording_storage", lambda *args: purged.append(args))
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        assert deletions.process_deletion(db, deletion_id)
+        assert not deletions.process_deletion(db, deletion_id)  # not due for the final sweep
+    early = _deletion_status(client, deletion_id).json()
+    assert early["live_deletion_status"] == "IN_PROGRESS" and early["live_deleted_at"] is None
+    assert len(purged) == 1
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET sweep_after=now()-interval '1 second', "
+            "next_attempt_at=now()-interval '1 second' WHERE id=%s",
+            (deletion_id,),
+        )
+    monkeypatch.setenv("DATABASE_URL", migrated_db)
+    assert maintenance.scheduled_handler({"task": "recordings"}, None) == {"deletions_attempted": 1}
+    final = _deletion_status(client, deletion_id, "bob").json()
+    contract_schema("DeletionStatus").validate(final)
+    assert final["live_deletion_status"] == "COMPLETED" and final["live_deleted_at"]
+    assert final["backup_status"] == "RETAINED_PENDING_EXPIRY"
+    assert final["backup_expires_at"] is None and not final["retryable"]
+    assert purged == [(rec, _source_key(client, rec))] * 2
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        assert not deletions.process_deletion(db, deletion_id, force=True)
+        assert not deletions.process_deletion(db, "del_" + "0" * 32)
+
+
+def test_deletion_storage_failure_is_durable_and_scheduler_can_retry(
+    client, consented, migrated_db, monkeypatch
+):
+    from umsal_backend import deletions
+
+    rec = _upload(client, consented).json()["recording_id"]
+    deletion_id = _delete(client, rec).json()["deletion_id"]
+
+    def unavailable(*_args):
+        raise StorageUnavailable
+
+    monkeypatch.setattr(deletions, "purge_recording_storage", unavailable)
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        assert deletions.process_deletion(db, deletion_id)
+        assert not deletions.process_deletion(db, deletion_id)
+    failed = _deletion_status(client, deletion_id).json()
+    assert failed["live_deletion_status"] == "FAILED" and failed["retryable"]
+    assert failed["last_error_code"] == "TEMPORARY_STORAGE_ERROR"
+    assert failed["live_deleted_at"] is None
+    assert client.get(f"/api/recordings/{rec}", headers=_h("alice")).status_code == 404
+    monkeypatch.setattr(deletions, "purge_recording_storage", lambda *_args: None)
+    with psycopg.connect(migrated_db, autocommit=True) as db:
+        db.execute(
+            "UPDATE deletion_jobs SET sweep_after=now()-interval '1 second', "
+            "next_attempt_at=now()-interval '1 second' WHERE id=%s",
+            (deletion_id,),
+        )
+        assert deletions.sweep_deletions(db) == {"deletions_attempted": 1}
+    assert _deletion_status(client, deletion_id).json()["live_deletion_status"] == "COMPLETED"
+
+
+def test_deletion_history_paginates_and_validates_cursors(client, consented):
+    accepted = []
+    for index in range(3):
+        rec = _upload(client, consented, key=f"history-upload-{index}").json()["recording_id"]
+        accepted.append(_delete(client, rec, key=f"history-delete-{index}").json()["deletion_id"])
+    first = client.get("/api/deletions?limit=2", headers=_h("bob")).json()
+    second = client.get(
+        "/api/deletions", params={"cursor": first["next_cursor"], "limit": 2}, headers=_h("bob")
+    ).json()
+    assert [item["deletion_id"] for item in first["items"] + second["items"]] == accepted[::-1]
+    assert second["next_cursor"] is None
+    assert client.get("/api/deletions?cursor=invalid", headers=_h("alice")).status_code == 422
+    assert client.get("/api/deletions?limit=0", headers=_h("alice")).status_code == 422
+
+
+def test_concurrent_participant_deletes_share_one_durable_job(
+    client, consented, migrated_db, run_concurrently
+):
+    rec = _upload(client, consented).json()["recording_id"]
+    responses = []
+
+    def alice():
+        responses.append(_delete(client, rec, "alice", "alice-delete-key"))
+
+    def bob():
+        responses.append(_delete(client, rec, "bob", "bob-delete-key"))
+
+    run_concurrently(alice, bob)
+    assert [response.status_code for response in responses] == [202, 202]
+    assert len({response.json()["deletion_id"] for response in responses}) == 1
+    with psycopg.connect(migrated_db) as db:
+        assert db.execute("SELECT count(*) FROM deletion_jobs").fetchone() == (1,)
+
+
+def test_cpu_late_completion_after_delete_is_terminal_without_payload(
+    client, consented, audio, results, migrated_db, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from umsal_backend.worker_api import operate
+
+    rec, job_id = _cpu_job(client, consented, audio, monkeypatch)
+    signing = SimpleNamespace(
+        bucket="synthetic-bucket",
+        client=SimpleNamespace(generate_presigned_url=lambda *args, **kw: "https://audio.test/one"),
+    )
+    with psycopg.connect(migrated_db) as db:
+        claimed = operate(db, {"operation": "claim", "job_id": job_id}, signing, results)
+        assert claimed["attempt"] == 1
+    assert _delete(client, rec).status_code == 202
+    with psycopg.connect(migrated_db) as db:
+        assert operate(
+            db, {"operation": "complete", "job_id": job_id, "attempt": 1}, signing, results
+        ) == {"state": "terminal"}
+        assert db.execute("SELECT status FROM analysis_jobs WHERE id=%s", (job_id,)).fetchone() == (
+            "CANCELLED",
+        )
+    assert not results.items
+
+
 def test_cpu_revoke_after_claim_has_durable_cancel_and_no_payload(
     client, consented, audio, results, migrated_db, monkeypatch
 ):

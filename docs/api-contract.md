@@ -2,13 +2,13 @@
 
 2026-11-04 · 이슈 #9 · 대응: umsal-pwa #20 (DEV-04)
 
-**설계 결정 기록과 현재 구현 대조 문서다.** 1·2절은 2026-11-17 소스 기준이고, D1~D12와 S1~S6의 날짜 있는 초안/제안은 당시 판단 기록이다. 업무 API의 구현 여부는 2절 표를 따른다(일부만 구현). "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9·D10·D11·D12를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 계약 원본은 2026-11-05부터 이 저장소 [`contracts/`](../contracts/openapi.yaml)(현재 v0.5.0, 이관 #25)이고, 확정 결정 중 D2·D3·D7·D10을 반영했다. 이 문서는 원안과의 차이와 결정 기록이다.
+**설계 결정 기록과 현재 구현 대조 문서다.** 1·2절은 2026-11-17 소스 기준이고, D1~D12와 S1~S6의 날짜 있는 초안/제안은 당시 판단 기록이다. 업무 API의 구현 여부는 2절 표를 따른다(일부만 구현). "확정"으로 표시한 D1·D2·D3·D5·D6·D7·D9·D10·D11·D12를 제외한 "결정 필요" 항목은 사용자·팀 확인 전까지 확정이 아니다. 계약 원본은 2026-11-05부터 이 저장소 [`contracts/`](../contracts/openapi.yaml)(현재 v0.6.0, 이관 #25)이고, 확정 결정 중 D2·D3·D7·D10을 반영했다. 이 문서는 원안과의 차이와 결정 기록이다.
 
 ## 1. 기준 원본
 
 | 항목 | 값 |
 |---|---|
-| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.5.0, 33 paths / 41 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7), 연결별 호칭 `PUT /connections/{id}/label`(D10, 0.4.0) 추가. 정적 검사는 `tests/test_contracts.py` |
+| 목표 계약(현재 원본) | 이 저장소 [`contracts/openapi.yaml`](../contracts/openapi.yaml) v0.6.0, 34 paths / 42 operations. v0.2.0 대비 `servers: /api`, `/health/live`·`/health/ready`(D2), CognitoBearer 설명(D3), `GET /connections`(D7), 연결별 호칭 `PUT /connections/{id}/label`(D10, 0.4.0) 추가. 정적 검사는 `tests/test_contracts.py` |
 | 이관 전 원안 | umsal-pwa [`contracts/openapi.yaml`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/contracts/openapi.yaml) v0.2.0, 23 paths / 28 operations |
 | 설계 설명 | umsal-pwa [`docs/design/09_API_계약_및_데이터설계.md`](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/blob/e54088b9489d67ab3269cb626c860d3b0a4bf79e/docs/design/09_API_%EA%B3%84%EC%95%BD_%EB%B0%8F_%EB%8D%B0%EC%9D%B4%ED%84%B0%EC%84%A4%EA%B3%84.md) (2026-10-27 Android 원안) |
 | 고정 commit | `e54088b9489d67ab3269cb626c860d3b0a4bf79e` (umsal-pwa main, 2026-11-04 조회) |
@@ -16,7 +16,7 @@
 
 ## 2. 현재 구현과 원안의 차이
 
-기준 main `e0b14a9`. FastAPI `create_app(...).openapi()`의 `/api` operationId를 원본 YAML과 대조했다. 원본은 **41개 목표 operation**, 공개 HTTP 구현은 **27개**다. `/health`는 운영 보조 경로라 이 수에서 제외한다. 구현된 부분의 parity·응답 스키마 검사가 전체 목표 기능의 구현을 보증하지는 않는다.
+현재 소스의 FastAPI `create_app(...).openapi()`의 `/api` operationId를 원본 YAML과 대조했다. 원본은 **42개 목표 operation**, 공개 HTTP 구현은 **30개**다. `/health`는 운영 보조 경로라 이 수에서 제외한다. 구현된 부분의 parity·응답 스키마 검사가 전체 목표 기능의 구현을 보증하지는 않는다.
 
 | 구분 | 공개 HTTP 구현 operationId | 개수 |
 |---|---|---|
@@ -24,14 +24,15 @@
 | 사용자·가족 | `getMe`, `listConnections`, `getConnection`, `createInvitation`, `acceptInvitation`, `getConsents`, `updateConsents`, `disconnect`, `setConnectionLabel` | 9 |
 | 파일·작업 | `createUpload`, `finalizeUpload`, `getJob`, `getRecording`, `listRecordings` | 5 |
 | 화자·결과 | `assignSpeaker`, `getResult` | 2 |
+| 녹음 삭제 | `deleteRecording`, `listDeletions`, `getDeletionStatus` | 3 |
 | 전경 통화 | `createCall`, `getCurrentCall`, `getCall`, `acceptCall`, `heartbeatCall`, `getCallSignal`, `putCallSignal`, `getCallIceServers`, `endCall` | 9 |
 
-공개 HTTP 경로에 없는 목표 operation은 아래 14개다.
+공개 HTTP 경로에 없는 목표 operation은 아래 12개다.
 
-- `retryJob`, `requestBulkDeletion`, `deleteRecording`, `getDeletionStatus`, `submitFeedback`, `getWeeklyReport`, `getSettings`, `updateSettings`, `registerDevice`, `unregisterDevice`.
+- `retryJob`, `requestBulkDeletion`, `submitFeedback`, `getWeeklyReport`, `getSettings`, `updateSettings`, `registerDevice`, `unregisterDevice`.
 - `claimWorkerJob`, `heartbeatWorkerJob`, `completeWorkerJob`, `failWorkerJob`: 공개 HTTP는 미구현이다. 실제 CPU 워커는 `worker_api.py`의 IAM 전용 Lambda `claim`/`heartbeat`/`complete`/`fail` 인터페이스로 처리하므로 워커 자체가 미구현인 것은 아니다.
 
-실제 모델은 `workers/cpu`이며 합성 `stub-1`과 실제 CPU pipeline을 구분한다. `DELETE /calls/{id}`는 통화 종료이며 원음 삭제와 관계없다. 녹음 물리 삭제·보관 만료·백업 정리는 별도 구현/검증이 필요하다.
+실제 모델은 `workers/cpu`이며 합성 `stub-1`과 실제 CPU pipeline을 구분한다. `DELETE /calls/{id}`는 통화 종료이며 원음 삭제와 관계없다. 삭제 요청 202는 즉시 조회 차단과 내구 접수를 뜻한다. 예약 작업이 원음·분석 결과의 빈 목록을 확인하면 삭제 완료 상태를 반환하고, 백업은 확인 대기로 표시한다. 자동 보관 만료는 별도 작업이다.
 
 ## 3. 결정 필요 항목
 

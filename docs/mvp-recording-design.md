@@ -131,13 +131,11 @@ sequenceDiagram
 
 ## 9. 정리·삭제
 
-- **방치된 업로드(B4):** 매일 정리 작업이 `expires_at < now()`이고 finalize 안 된 세션의 녹음을 `EXPIRED`로 바꾸고 DB `s3_key`에서 얻은 해당 녹음 prefix의 S3 버전을 지우도록 구현해야 한다(사용자별 상위 경로를 지우지 않음). finalize된 녹음의 보관 기간은 미정(umsal-pwa #19)이며 지금은 삭제 요청만이 원음을 지우는 길이다.
-- **삭제(B3):**
-  1. `deleteRecording`: 한 트랜잭션에서 `recordings.deleted_at`·`filename` 지움, 진행 중 작업 `CANCELLED`, `deletion_jobs`(PENDING, `sweep_after = 업로드 세션 만료 + 5분`) 삽입 → 202 `DeletionAccepted`(`deletion_id`, `status_url: /deletions/<id>`, `request_id`는 별개).
-  2. 같은 요청에서 커밋 뒤: S3 `ListObjectVersions(prefix)`를 끝까지 넘기며 모든 version과 delete marker를 지우고, DynamoDB `Query(pk = REC#<id>)`의 모든 `RESULT#*`를 지운 뒤, 두 목록이 비었는지 다시 조회한다. 유효한 업로드 URL이 더 없으면(세션이 이미 만료·finalize됨) 바로 `COMPLETED`·`live_deleted_at`, 아직 유효한 URL이 있을 수 있으면 `IN_PROGRESS`로 두고 3단계를 기다린다. 실패하면 `FAILED`·`retryable`·`last_error_code`·`next_attempt_at`, 정리 작업이 재시도(없는 version 삭제는 무해).
-  3. 업로드 URL이 아직 유효한 동안 PUT이 늦게 도착할 수 있으므로 `sweep_after`가 지나면 정리 작업(15분 주기)이 S3와 DynamoDB를 한 번 더 지우고 비었는지 확인한 뒤에야 `COMPLETED`·`live_deleted_at`을 기록한다(계약: 삭제 완료 전에 완전 소거로 표시하지 않음).
-  4. PostgreSQL의 `speaker_intervals`는 비우고, 작업·assignment 행은 tombstone과 함께 남긴다(감사용, 내용 없음).
-- `getDeletionStatus`: 삭제 요청자 또는 녹음 참여자. `backup_status`는 RDS 자동 백업 1일(`database.yaml`)과 DynamoDB PITR 35일 중 늦은 쪽으로 `backup_expires_at = 최종 live_deleted_at + 35일`, 그 시각이 지나면 `EXPIRED`.
+- 요청 기반 한 건 삭제는 [백엔드 #100](https://github.com/Advanced-AI-Leadership-Project/umsal-backend/issues/100)에서 구현한다. 자동 만료·방치 업로드 정리는 [PWA #40](https://github.com/Advanced-AI-Leadership-Project/umsal-pwa/issues/40)에서 다룬다.
+- 두 참여자 중 누구든 삭제를 요청할 수 있다. 한 트랜잭션에서 기록에 삭제 표식을 쓰고 파일명과 화자 구간을 지운다. 대기·진행 작업을 취소하고 삭제 작업을 저장한 뒤 202와 삭제 번호를 반환한다. 같은 녹음의 후속 요청도 기존 삭제 번호를 반환한다.
+- 기존 녹음 정리 스케줄이 대상 녹음 경로의 S3 버전·삭제 마커·미완료 멀티파트 및 모든 분석 결과 버전을 삭제한다. 일반 API 역할과 정리 작업 역할을 분리한다.
+- 이전 PUT URL의 세션 만료에 5분을 더한 시점 이후의 정리에서 S3·DynamoDB 목록이 비어 있을 때 서비스 저장소 삭제 완료를 기록한다. 먼저 실행한 정리의 성공은 그 이후의 확인을 대신하지 않는다. 부분 실패 시 앱 조회 차단을 유지하며 예약 작업에서 다시 시도한다. 만료 전에 시작한 PUT이 늦게 끝나는 경우 S3 객체 생성 알림이 삭제 작업을 다시 열고 해당 녹음을 재정리한다. 알림이 전해지지 않아도 예약 작업에서 완료 기록을 순차 재확인한다. 완료 기록은 하루 뒤 재확인 대상이 되며 미완료 삭제를 먼저 처리한다.
+- 참여자는 `GET /api/deletions`와 `GET /api/deletions/{id}`로 처리 상태를 확인한다. 백업은 운영 만료 근거를 확보하기 전까지 `RETAINED_PENDING_EXPIRY`를 반환하고 기한 값은 비운다. 처리 중 워커가 받아 둔 임시 파일은 기존 종료 경로에서 제거한다.
 
 ## 10. 실패 처리
 
