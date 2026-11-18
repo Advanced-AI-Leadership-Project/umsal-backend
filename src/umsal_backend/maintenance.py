@@ -45,8 +45,9 @@ def run() -> dict[str, int]:
 def scheduled_handler(event: Any, _context: Any) -> dict[str, int]:
     """Lambda entry point for a scheduled rule. Logs only counts, never row contents.
 
-    The recording task retries explicit deletion requests. Automatic retention
-    expiry remains a separate feature; daily invitation cleanup has its own task.
+    The recording task retries explicit deletion requests and audits a small daily
+    subset of completed tombstones as a fallback for lost object events.
+    Automatic retention expiry is separate; daily invitation cleanup has its own task.
     """
     if isinstance(event, dict) and ("source" in event or "detail-type" in event):
         key = _object_created_key(event)

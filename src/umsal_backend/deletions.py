@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from time import monotonic
 from typing import Annotated, Literal
 
 import psycopg
@@ -67,7 +68,13 @@ def _status(row: tuple) -> DeletionStatus:
     )
 
 
-def process_deletion(db: psycopg.Connection, deletion_id: str, *, force: bool = False) -> bool:
+def process_deletion(
+    db: psycopg.Connection,
+    deletion_id: str,
+    *,
+    force: bool = False,
+    verify_completed: bool = False,
+) -> bool:
     """Attempt one durable deletion; false means not due or owned by another worker.
 
     Lock order is recording -> deletion -> analysis job. Every result writer also
@@ -94,7 +101,9 @@ def process_deletion(db: psycopg.Connection, deletion_id: str, *, force: bool = 
             "FROM deletion_jobs WHERE id = %s FOR UPDATE",
             (deletion_id,),
         ).fetchone()
-        if job[0] == "COMPLETED" or (not force and not job[2]):
+        if job[0] == "COMPLETED" and not verify_completed:
+            return False
+        if not force and not job[2]:
             return False
         try:
             purge_recording_storage(link[0], recording[0])
@@ -111,17 +120,29 @@ def process_deletion(db: psycopg.Connection, deletion_id: str, *, force: bool = 
                 "UPDATE deletion_jobs SET live_deletion_status = CASE "
                 "WHEN %s THEN 'COMPLETED' ELSE 'IN_PROGRESS' END, "
                 "live_deleted_at = CASE WHEN %s "
-                "THEN clock_timestamp() ELSE NULL END, last_error_code = NULL, "
+                "THEN COALESCE(live_deleted_at, clock_timestamp()) ELSE NULL END, "
+                "last_error_code = NULL, "
                 "attempts = attempts + 1, next_attempt_at = CASE "
-                "WHEN %s THEN NULL ELSE sweep_after END "
+                "WHEN %s THEN clock_timestamp() + interval '1 day' ELSE sweep_after END "
                 "WHERE id = %s",
                 (job[3], job[3], job[3], deletion_id),
             )
     return True
 
 
-def sweep_deletions(db: psycopg.Connection, *, limit: int = 25) -> dict[str, int]:
-    """Retry requested deletions only; automatic retention expiry is separate."""
+def sweep_deletions(
+    db: psycopg.Connection,
+    *,
+    limit: int = 25,
+    completed_limit: int = 2,
+    completed_budget_seconds: float = 10,
+) -> dict[str, int]:
+    """Prioritize unfinished jobs, then audit a bounded number of old tombstones.
+
+    Completed jobs are checked daily even if Object Created event delivery failed.
+    The time budget limits new audit attempts; an already running SDK call keeps
+    its adapter timeout. Automatic retention expiry is a separate feature.
+    """
     with db.transaction():
         pending = db.execute(
             "SELECT id FROM deletion_jobs WHERE live_deletion_status <> 'COMPLETED' "
@@ -130,6 +151,18 @@ def sweep_deletions(db: psycopg.Connection, *, limit: int = 25) -> dict[str, int
             (limit,),
         ).fetchall()
     attempted = sum(process_deletion(db, row[0]) for row in pending)
+    deadline = monotonic() + completed_budget_seconds
+    with db.transaction():
+        completed = db.execute(
+            "SELECT id FROM deletion_jobs WHERE live_deletion_status = 'COMPLETED' "
+            "AND (next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp()) "
+            "ORDER BY next_attempt_at NULLS FIRST, created_at, id LIMIT %s",
+            (completed_limit,),
+        ).fetchall()
+    for row in completed:
+        if monotonic() >= deadline:
+            break
+        attempted += process_deletion(db, row[0], verify_completed=True)
     return {"deletions_attempted": attempted}
 
 
